@@ -1,0 +1,12 @@
+.env
+.venv/
+data/
+__pycache__/
+*.pyc
+web/data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+logs/
+processed.json
+katago/

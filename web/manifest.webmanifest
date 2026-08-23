@@ -1,0 +1,15 @@
+{
+  "name": "囲碁 棋譜レビュー",
+  "short_name": "囲碁レビュー",
+  "description": "自分の棋譜から悪手を抽出し、次の一手問題として復習するアプリ",
+  "start_url": "./index.html#/home",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#14141a",
+  "theme_color": "#1b1b1f",
+  "lang": "ja",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
