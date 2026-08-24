@@ -157,6 +157,24 @@ def cmd_writeback(settings: Settings, log: Log, args) -> int:
     return 0
 
 
+def cmd_pull_answers(settings: Settings, log: Log, args) -> int:
+    """Cloudflare KV に溜まった演習・詰碁の回答をローカル DB へ取り込む。"""
+    from .kv_sync import pull_answers
+
+    with Database(settings.db_path) as db:
+        result = pull_answers(db, settings, log)
+    if "skipped" in result:
+        log(f"回答の取り込みをスキップしました: {result['skipped']}")
+        return 0
+    total = sum(v for k, v in result.items() if k != "errors")
+    log(
+        f"回答を取り込みました: 演習 {result['answer']} 件 / 詰碁記録 {result['tsumego']} 件 / "
+        f"詰碁回答 {result['tsumego_answer']} 件 / 気づき {result['note']} 件"
+        + (f" / エラー {result['errors']} 件" if result["errors"] else "")
+    )
+    return 0
+
+
 def cmd_run(settings: Settings, log: Log, args) -> int:
     """夜間バッチの本体。取り込み → 解析 → 書き出し → 書き戻し。"""
     log("=== バッチ開始 ===")
@@ -164,6 +182,7 @@ def cmd_run(settings: Settings, log: Log, args) -> int:
         cmd_sync(settings, log, args)
     else:
         log("NOTION_TOKEN が未設定のため取り込みをスキップします。")
+    cmd_pull_answers(settings, log, args)
     cmd_analyze(settings, log, args)
     cmd_export(settings, log, args)
     if settings.notion_token:
@@ -275,6 +294,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_wb = sub.add_parser("writeback", help="Notion へ書き戻す")
     p_wb.set_defaults(func=cmd_writeback)
+
+    p_pa = sub.add_parser("pull-answers", help="Cloudflare KV の回答をローカルDBへ取り込む")
+    p_pa.set_defaults(func=cmd_pull_answers)
 
     p_st = sub.add_parser("status", help="状況を表示")
     p_st.set_defaults(func=cmd_status)

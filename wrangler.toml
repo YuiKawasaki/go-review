@@ -1,0 +1,9 @@
+name = "go-review"
+pages_build_output_dir = "web"
+compatibility_date = "2026-08-01"
+
+# PWA から送信される演習・詰碁の回答／気づきメモの一時受け皿。
+# 夜間バッチが定期的に読み出し、ローカルDBへ取り込んでからここを空にする。
+[[kv_namespaces]]
+binding = "ANSWERS_KV"
+id = "f560632a9a6d46afa93fba8a4582b5b1"
