@@ -10,6 +10,10 @@ export function sgfToCoord(s, size) {
   return [col, row];
 }
 
+export function colLetter(col) {
+  return GTP_COLS[col];
+}
+
 export function coordToGtp(c, size) {
   if (!c) return 'pass';
   return GTP_COLS[c[0]] + (size - c[1]);

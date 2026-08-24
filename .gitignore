@@ -10,3 +10,4 @@ web/data/
 logs/
 processed.json
 katago/
+.wrangler/

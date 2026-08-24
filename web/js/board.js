@@ -2,7 +2,7 @@
 // 着手はダブルタップ方式（1タップ目で位置確認、2タップ目で確定）。
 // 九路盤でも指の誤操作を防ぐため（非機能要件 操作性）。
 
-import { Board } from './goban.js';
+import { Board, colLetter } from './goban.js';
 
 const MARKER_STYLE = {
   good:     { color: '#1f9d55', shape: 'circle' },
@@ -61,7 +61,7 @@ export class BoardView {
   metrics() {
     const rect = this.canvas.getBoundingClientRect();
     const px = Math.min(rect.width, rect.height) || 320;
-    const pad = px * 0.06;
+    const pad = px * 0.09;
     const step = (px - pad * 2) / (this.size - 1);
     return { px, pad, step, rect };
   }
@@ -135,6 +135,20 @@ export class BoardView {
       ctx.moveTo(p, pad); ctx.lineTo(p, pad + (this.size - 1) * step);
     }
     ctx.stroke();
+
+    // 座標ラベル（列 A〜J[Iは飛ばす] / 行 9〜1。GTP表記と一致させる）
+    ctx.fillStyle = '#4a3a20';
+    ctx.font = `${Math.round(step * 0.32)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let col = 0; col < this.size; col += 1) {
+      const [x] = this.toPixel(col, 0);
+      ctx.fillText(colLetter(col), x, pad * 0.42);
+    }
+    for (let row = 0; row < this.size; row += 1) {
+      const [, y] = this.toPixel(0, row);
+      ctx.fillText(String(this.size - row), pad * 0.42, y);
+    }
 
     // 星
     const stars = this.size === 9 ? [[2, 2], [6, 2], [4, 4], [2, 6], [6, 6]] : [];
