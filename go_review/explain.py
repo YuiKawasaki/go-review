@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .config import Settings
-from .tagging import TAG_VOCABULARY
+from .tagging import TAG_DESCRIPTIONS, TAG_VOCABULARY
 
 SYSTEM_PROMPT = """あなたは九路盤の囲碁を学ぶ人のための解説者です。
 
@@ -148,31 +148,29 @@ def generate_explanation(
 
 
 def template_explanation(context: MoveContext) -> str:
-    """API なしでも成立する解説（数値の言い換えのみ）。"""
-    tags = "、".join(context.tags) if context.tags else "分類なし"
+    """API なしでも成立する解説。専門用語をかみ砕き、初心者にも読める文章にする。"""
     lines = [
         "相手の狙い:",
         (
-            f"この手のあと、相手が最善で応じると自分の勝率は "
-            f"{context.winrate_after:.0f}% まで下がります。"
+            f"{context.actual_move} のあと、相手が最も厳しく攻めてくると、"
+            f"あなたの勝率は {context.winrate_after:.0f}% まで下がってしまいます。"
             + (
-                f" 咎め筋は {' '.join(context.punish_pv[:4])} の進行です。"
+                f"具体的には {' '.join(context.punish_pv[:4])} と進む展開です。"
                 if context.punish_pv
                 else ""
             )
         ),
         "",
         "自分の見落とし:",
-        (
-            f"{context.actual_move} は勝率を {context.actual_winrate_drop:.0f}pt 落としました。"
-            f" 機械判定された失敗の種類は「{tags}」です。"
-        ),
+        _oversight_text(context),
         "",
         "正しい手の理由:",
         (
-            f"{context.best_move} なら勝率 {context.best_winrate:.0f}% を保てました。"
+            f"ここでは {context.best_move} と打てば、勝率を "
+            f"{context.best_winrate:.0f}% に保てました。"
             + (
-                f" 相手が最善で応じれば {' '.join(context.best_pv[:4])} と進みます。"
+                f" 相手が最善で応じても {' '.join(context.best_pv[:4])} と進み、"
+                "大きく崩れることはありません。"
                 if context.best_pv
                 else ""
             )
@@ -180,9 +178,26 @@ def template_explanation(context: MoveContext) -> str:
     ]
     if context.opponent_missed is True:
         lines.append("")
-        lines.append("補足: 実戦では相手もこの咎め方を見落としていました。"
-                     "咎められなかっただけで、手そのものは損をしています。")
+        lines.append(
+            "補足: 実戦では相手もこの反撃に気づいていませんでした。"
+            f"結果的に咎められはしませんでしたが、{context.actual_move} 自体は"
+            "損をする手だったので、次に似た場面が来たら気をつけたいところです。"
+        )
     return "\n".join(lines)
+
+
+def _oversight_text(context: MoveContext) -> str:
+    base = (
+        f"{context.actual_move} で勝率を {context.actual_winrate_drop:.0f}pt "
+        f"落としてしまいました。"
+    )
+    if not context.tags:
+        return base + " 今回は特定のミスの型には分類されませんでした。"
+    glosses = [
+        f"「{tag}」（{TAG_DESCRIPTIONS[tag]}）" if tag in TAG_DESCRIPTIONS else f"「{tag}」"
+        for tag in context.tags
+    ]
+    return base + f" これは {'、'.join(glosses)} にあたるミスです。"
 
 
 def suggest_tags(
