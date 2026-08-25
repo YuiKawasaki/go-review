@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import queue
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Protocol
@@ -157,6 +159,22 @@ class KataGoEngine:
             encoding="utf-8",
             bufsize=1,
         )
+        # stdout.readline() は応答が来なければ永久に返らない。Windows のパイプは
+        # select() できないので、読み取りは専用スレッドに任せてキュー経由で受け取り、
+        # 本体側は timeout 付きで待つ（省電力の待機などで固まったまま朝を迎えないように）。
+        self._lines: "queue.Queue[Optional[str]]" = queue.Queue()
+        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader.start()
+
+    def _read_loop(self) -> None:
+        try:
+            assert self.proc.stdout
+            for line in self.proc.stdout:
+                self._lines.put(line)
+        except Exception:
+            pass
+        finally:
+            self._lines.put(None)   # 応答の終わり（プロセス終了）
 
     def _next_id(self) -> str:
         self._counter += 1
@@ -203,9 +221,19 @@ class KataGoEngine:
 
             expected = len(query["analyzeTurns"])
             results: dict[int, TurnAnalysis] = {}
+            deadline = time.monotonic() + self.timeout
             while len(results) < expected:
-                line = self.proc.stdout.readline()
-                if not line:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"KataGo が {self.timeout:.0f} 秒以内に応答しませんでした"
+                        f"（{len(results)}/{expected} 件受信済み）"
+                    )
+                try:
+                    line = self._lines.get(timeout=remaining)
+                except queue.Empty:
+                    continue
+                if line is None:
                     raise RuntimeError("KataGo からの応答が途絶しました")
                 line = line.strip()
                 if not line:

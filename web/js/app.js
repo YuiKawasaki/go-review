@@ -62,6 +62,7 @@ async function viewHome() {
   }
 
   const due = await store.loadDue().catch(() => ({ problems: [], tsumego: [] }));
+  const dueTsumego = (due.tsumego || []).filter((t) => t.interactive);
   const pending = index.unanalyzed || 0;
   const queued = await store.queueSize();
 
@@ -79,9 +80,19 @@ async function viewHome() {
       }, '演習を始める'),
     ]),
     el('div', { class: 'card' }, [
-      el('h2', {}, '詰碁を記録'),
-      el('p', { class: 'muted' }, '解いた数と間違えた数だけ。10秒で終わります。'),
-      el('button', { onclick: () => nav('#/tsumego') }, '記録する'),
+      el('div', { class: 'row-between' }, [
+        el('h2', {}, '今日の詰碁'),
+        el('span', { class: 'badge' }, `${dueTsumego.length} 問`),
+      ]),
+      el('p', { class: 'muted' }, dueTsumego.length
+        ? '盤の上で解けます。間違えた問題はまた出ます。'
+        : '出題できる詰碁がありません。'),
+      el('button', {
+        class: 'primary',
+        disabled: dueTsumego.length ? null : 'disabled',
+        onclick: () => nav('#/tsumego'),
+      }, '詰碁を解く'),
+      el('button', { class: 'link', onclick: () => nav('#/tsumego-log') }, '別アプリで解いた分を記録する'),
     ]),
   ];
 
@@ -614,6 +625,129 @@ async function viewQuiz() {
   }
 }
 
+// ---------------------------------------------------------------- 詰碁演習
+
+// アプリ内蔵の詰碁を盤上で解く。正解手は KataGo が事前に検証したものだけを
+// 持っているので、ここでは照合するだけで「正解らしさ」を独自に判断しない。
+async function viewTsumegoQuiz() {
+  app.replaceChildren(el('p', { class: 'loading' }, '読み込み中…'));
+  const due = await store.loadDue().catch(() => ({ tsumego: [] }));
+  const queue = (due.tsumego || []).filter((t) => t.interactive);
+
+  if (!queue.length) {
+    app.replaceChildren(el('div', { class: 'card' }, [
+      el('h2', {}, '今日の詰碁はありません'),
+      el('p', { class: 'muted' }, '出題した問題をすべて解き終えています。'),
+      el('button', { onclick: () => nav('#/home') }, 'ホームへ'),
+      el('button', { class: 'link', onclick: () => nav('#/tsumego-log') }, '別アプリで解いた分を記録する'),
+    ]));
+    return;
+  }
+
+  let position = 0;
+  renderTsumego();
+
+  function renderTsumego() {
+    const problem = queue[position];
+    if (!problem) {
+      app.replaceChildren(el('div', { class: 'card' }, [
+        el('h2', {}, 'お疲れさまでした'),
+        el('p', {}, `詰碁 ${queue.length} 問を終えました。`),
+        el('button', { class: 'primary', onclick: () => nav('#/home') }, 'ホームへ'),
+      ]));
+      return;
+    }
+
+    const parsed = parseSgf(problem.position_sgf || '');
+    const states = buildStates(parsed);
+    const size = parsed.size || problem.size || 9;
+    const state = states[states.length - 1];
+    const startedAt = performance.now();
+    let hintLevel = 0;
+    let answered = false;
+
+    const canvas = el('canvas', { class: 'board' });
+    const hintBox = el('div', { class: 'hints' });
+    const resultBox = el('div', { class: 'result' });
+
+    const view = new BoardView(canvas, { size, onPlay: (coord) => submit(coord) });
+
+    function submit(coord) {
+      if (answered) return;
+      answered = true;
+      const seconds = (performance.now() - startedAt) / 1000;
+      const gtp = coordToGtp(coord, size);
+      const hit = (problem.correct_moves || []).find(
+        (m) => (m.coord || '').toUpperCase() === gtp.toUpperCase(),
+      );
+      const isCorrect = Boolean(hit);
+
+      store.submitTsumegoAnswer(problem.tsumego_id, isCorrect, seconds, hintLevel > 0);
+      showResult(coord, isCorrect, hit);
+    }
+
+    function showResult(coord, isCorrect, hit) {
+      const ghosts = (problem.correct_moves || []).map((m, i) => ({
+        coord: gtpToCoord(m.coord, size),
+        color: problem.player_to_move,
+        label: i === 0 ? '正' : String(i + 1),
+      }));
+      view.interactive = false;
+      view.setState(state, { lastMove: coord, ghosts, numbers: state.numbers });
+
+      fill(
+        resultBox,
+        el('div', { class: `verdict verdict-${isCorrect ? 'ok' : 'wrong'}` }, isCorrect ? '正解' : '不正解'),
+        el('p', { class: 'explanation' }, hit && hit.note ? hit.note : (problem.answer_note || '')),
+        problem.theme_tag ? el('div', { class: 'row' }, [el('span', { class: 'tag' }, problem.theme_tag)]) : null,
+        el('p', { class: 'muted small' }, isCorrect
+          ? '次に出るのは少し先になります。'
+          : '間違えた問題は明日もう一度出ます。'),
+        el('div', { class: 'row' }, [
+          el('button', {
+            class: 'primary',
+            onclick: () => { position += 1; renderTsumego(); },
+          }, '理解した'),
+          el('button', {
+            onclick: () => { position += 1; renderTsumego(); },
+          }, '次へ'),
+        ]),
+      );
+    }
+
+    function showHint() {
+      const hints = problem.hints || [];
+      if (hintLevel >= hints.length) return;
+      hintBox.appendChild(el('p', { class: 'hint' }, hints[hintLevel]));
+      hintLevel += 1;
+    }
+
+    app.replaceChildren(
+      el('div', { class: 'quiz-header' }, [
+        el('span', {}, `${position + 1} / ${queue.length}`),
+        el('span', { class: 'muted' }, ` 難易度 ${problem.difficulty || '-'}`),
+        el('span', { class: 'muted' }, ` ${problem.player_to_move === 'W' ? '白番' : '黒番'}`),
+        problem.first_time ? null : el('span', { class: 'badge' }, '復習'),
+      ]),
+      el('p', { class: 'prompt' }, problem.theme_tag
+        ? `${problem.theme_tag}の問題です。最善の一手はどこか。`
+        : 'この局面での最善の一手はどこか。'),
+      canvas,
+      el('p', { class: 'muted small' }, '交点を2回タップで確定します。'),
+      el('div', { class: 'row' }, [
+        el('button', {
+          disabled: (problem.hints || []).length ? null : 'disabled',
+          onclick: () => showHint(),
+        }, 'ヒント'),
+        el('button', { class: 'link', onclick: () => { position += 1; renderTsumego(); } }, 'とばす'),
+      ]),
+      hintBox,
+      resultBox,
+    );
+    view.setState(state, { numbers: state.numbers });
+  }
+}
+
 // ---------------------------------------------------------------- 詰碁記録
 
 const TSUMEGO_THEMES = [
@@ -647,7 +781,7 @@ async function viewTsumego() {
 
   app.replaceChildren(
     el('div', { class: 'card' }, [
-      el('h2', {}, '詰碁の記録'),
+      el('h2', {}, '別アプリで解いた詰碁の記録'),
       el('p', { class: 'muted' }, '解いた問題ではなく、間違えた問題だけを覚えておけば足ります。'),
       counter('解いた数', () => solved, (v) => { solved = v; }),
       counter('間違えた数', () => wrong, (v) => { wrong = v; }),
@@ -728,7 +862,8 @@ const routes = [
   [/^#\/home$/, viewHome],
   [/^#\/game\/(.+)$/, viewGame],
   [/^#\/quiz$/, viewQuiz],
-  [/^#\/tsumego$/, viewTsumego],
+  [/^#\/tsumego$/, viewTsumegoQuiz],
+  [/^#\/tsumego-log$/, viewTsumego],
   [/^#\/dashboard$/, viewDashboard],
 ];
 

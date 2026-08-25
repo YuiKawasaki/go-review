@@ -113,15 +113,21 @@ CREATE TABLE IF NOT EXISTS variations (
 );
 
 CREATE TABLE IF NOT EXISTS tsumego (
-    id          TEXT PRIMARY KEY,
-    source      TEXT,
-    theme_tag   TEXT,
-    image_path  TEXT,
-    answer_note TEXT,
-    streak      INTEGER DEFAULT 0,
-    next_due_at TEXT,
-    graduated   INTEGER DEFAULT 0,
-    created_at  TEXT DEFAULT (datetime('now'))
+    id             TEXT PRIMARY KEY,
+    source         TEXT,
+    theme_tag      TEXT,
+    image_path     TEXT,
+    answer_note    TEXT,
+    streak         INTEGER DEFAULT 0,
+    next_due_at    TEXT,
+    graduated      INTEGER DEFAULT 0,
+    size           INTEGER DEFAULT 9,
+    position_sgf   TEXT,
+    player_to_move TEXT,
+    correct_moves  TEXT,
+    difficulty     INTEGER,
+    hints          TEXT,
+    created_at     TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS tsumego_logs (
@@ -195,7 +201,23 @@ class Database:
         self.conn = sqlite3.connect(str(self.path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """CREATE TABLE IF NOT EXISTS では追加されない、既存テーブルへの列追加。"""
+        existing = {row["name"] for row in self.conn.execute("PRAGMA table_info(tsumego)")}
+        additions = {
+            "size": "INTEGER DEFAULT 9",
+            "position_sgf": "TEXT",
+            "player_to_move": "TEXT",
+            "correct_moves": "TEXT",
+            "difficulty": "INTEGER",
+            "hints": "TEXT",
+        }
+        for column, decl in additions.items():
+            if column not in existing:
+                self.conn.execute(f"ALTER TABLE tsumego ADD COLUMN {column} {decl}")
 
     # ---------------------------------------------------------- 基本
 

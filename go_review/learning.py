@@ -49,18 +49,38 @@ def record_tsumego_problem(
     image_path: str = "",
     answer_note: str = "",
     tsumego_id: Optional[str] = None,
+    size: int = 9,
+    position_sgf: str = "",
+    player_to_move: str = "",
+    correct_moves: Optional[list[dict]] = None,
+    difficulty: Optional[int] = None,
+    hints: Optional[list[str]] = None,
 ) -> str:
-    """詳細入力: 間違えた 1 問をスクリーンショット付きで登録する。
+    """詰碁を1問登録する。
 
-    登録した問題は生成問題と同じ間隔で復習対象になる（正誤は自己申告）。
+    - 手入力（外部アプリで解いたもの）: theme_tag/answer_note だけ渡す
+      すでに一度解いているので、復習は翌日から。
+    - アプリ内蔵（このアプリ自身で出題・KataGoで検証済み）:
+      position_sgf/player_to_move/correct_moves も渡す
+      まだ一度も解いていないので、次回出題日を持たせず当日から出題する。
     """
     tsumego_id = tsumego_id or f"T-{uuid.uuid4().hex[:8]}"
+    interactive = bool(position_sgf)
+    next_due_at = (
+        None if interactive
+        else (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+    )
     db.execute(
         "INSERT OR REPLACE INTO tsumego (id, source, theme_tag, image_path, answer_note, "
-        "streak, next_due_at, graduated) VALUES (?,?,?,?,?,0,?,0)",
+        "streak, next_due_at, graduated, size, position_sgf, player_to_move, correct_moves, "
+        "difficulty, hints) VALUES (?,?,?,?,?,0,?,0,?,?,?,?,?,?)",
         (
             tsumego_id, source, theme_tag, image_path, answer_note,
-            (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat(),
+            next_due_at,
+            size, position_sgf, player_to_move,
+            dumps(correct_moves) if correct_moves is not None else None,
+            difficulty,
+            dumps(hints) if hints is not None else None,
         ),
     )
     db.commit()
@@ -99,13 +119,32 @@ def record_tsumego_answer(
     return {"tsumego_id": tsumego_id, "streak": streak, "graduated": bool(graduated), "next_due_at": due}
 
 
-def due_tsumego(db: Database, on_date: Optional[str] = None) -> list[dict]:
+def due_tsumego(
+    db: Database,
+    on_date: Optional[str] = None,
+    settings: Optional[Settings] = None,
+    limit: Optional[int] = None,
+) -> list[dict]:
+    """本日出題する詰碁を選ぶ。
+
+    レベルに合わせる、というのはこのアプリではレーティング推定はせず、
+    「一度でも間違えて期日超過した問題」を最優先し、次いで初見の問題を
+    難易度の低い順に出す、というシンプルな方針にしている（急に難しい問題
+    ばかり続かないように）。
+    """
     on_date = on_date or _today_str()
+    limit = limit or (settings.daily_review_limit if settings else 10)
     rows = db.query(
-        "SELECT * FROM tsumego WHERE graduated = 0 AND (next_due_at IS NULL OR next_due_at <= ?) "
-        "ORDER BY next_due_at",
+        "SELECT * FROM tsumego WHERE graduated = 0 AND (next_due_at IS NULL OR next_due_at <= ?)",
         (on_date,),
     )
+
+    def sort_key(r: object) -> tuple:
+        first_time = r["next_due_at"] is None
+        due = r["next_due_at"] or ""
+        return (0 if not first_time else 1, due, r["difficulty"] or 0)
+
+    ordered = sorted(rows, key=sort_key)
     return [
         {
             "tsumego_id": r["id"],
@@ -114,8 +153,17 @@ def due_tsumego(db: Database, on_date: Optional[str] = None) -> list[dict]:
             "image_path": r["image_path"],
             "streak": r["streak"] or 0,
             "next_due_at": r["next_due_at"],
+            "size": r["size"] or 9,
+            "position_sgf": r["position_sgf"],
+            "player_to_move": r["player_to_move"],
+            "correct_moves": loads(r["correct_moves"], []) or [],
+            "difficulty": r["difficulty"],
+            "hints": loads(r["hints"], []) or [],
+            "answer_note": r["answer_note"],
+            "interactive": bool(r["position_sgf"]),
+            "first_time": r["next_due_at"] is None,
         }
-        for r in rows
+        for r in ordered[:limit]
     ]
 
 

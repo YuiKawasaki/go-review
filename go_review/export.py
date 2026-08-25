@@ -202,5 +202,5 @@ def due_payload(db: Database, settings: Settings) -> dict:
         "date": datetime.now(timezone.utc).date().isoformat(),
         "limit": settings.daily_review_limit,
         "problems": due_problems(db, settings),
-        "tsumego": due_tsumego(db),
+        "tsumego": due_tsumego(db, settings=settings),
     }

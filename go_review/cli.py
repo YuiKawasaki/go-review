@@ -234,6 +234,29 @@ def cmd_tsumego(settings: Settings, log: Log, args) -> int:
     return 0
 
 
+def cmd_seed_tsumego(settings: Settings, log: Log, args) -> int:
+    """内蔵の詰碁を KataGo で検証して登録する（初回のみ・追加時のみ実行）。"""
+    from .tsumego_seed import import_verified, verify_candidates
+
+    if not settings.katago_available:
+        log("KataGo がありません。正解手を検証できないので中止します。")
+        return 1
+
+    only = [t.strip() for t in (args.only or "").split(",") if t.strip()] or None
+    verified = verify_candidates(settings, log, visits=args.visits, only=only)
+    if not verified:
+        log("採用できる局面がありませんでした。登録は行いません。")
+        return 1
+    if args.dry_run:
+        log("dry-run のため登録しません。")
+        return 0
+
+    with Database(settings.db_path) as db:
+        count = import_verified(db, verified)
+    log(f"詰碁を登録しました: {count} 問")
+    return 0
+
+
 def cmd_serve(settings: Settings, log: Log, args) -> int:
     from .server import serve
 
@@ -311,6 +334,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_ts.add_argument("--themes", default="")
     p_ts.add_argument("--source", default="")
     p_ts.set_defaults(func=cmd_tsumego)
+
+    p_seed = sub.add_parser("seed-tsumego", help="内蔵の詰碁を KataGo で検証して登録")
+    p_seed.add_argument("--visits", type=int, default=1200, help="1局面あたりの探索数")
+    p_seed.add_argument("--only", default="", help="検証する候補IDをカンマ区切りで指定")
+    p_seed.add_argument("--dry-run", action="store_true", help="検証だけ行い登録しない")
+    p_seed.set_defaults(func=cmd_seed_tsumego)
 
     p_sv = sub.add_parser("serve", help="検討モード用ローカルサーバ")
     p_sv.set_defaults(func=cmd_serve)

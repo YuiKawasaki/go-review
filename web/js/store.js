@@ -115,7 +115,12 @@ export async function flushQueue() {
   const items = (await tx(STORE_QUEUE, 'readonly', (s) => s.getAll())) || [];
   let sent = 0;
   for (const item of items) {
-    const endpoint = { answer: '/api/answer', tsumego: '/api/tsumego', note: '/api/note' }[item.kind];
+    const endpoint = {
+      answer: '/api/answer',
+      tsumego: '/api/tsumego',
+      'tsumego-answer': '/api/tsumego-answer',
+      note: '/api/note',
+    }[item.kind];
     if (!endpoint) continue;
     try {
       const res = await fetch(apiUrl(endpoint), {
@@ -210,6 +215,18 @@ export async function submitAnswer(problemId, coord, seconds, hintUsed, reason) 
   const answers = state.answers || {};
   answers[problemId] = { coord, at: new Date().toISOString() };
   saveLocal({ answers });
+  return payload;
+}
+
+// アプリ内蔵の詰碁を1問解いたときの記録（正誤は盤上の着手で判定済みのものを送る）
+export async function submitTsumegoAnswer(tsumegoId, isCorrect, seconds, hintUsed) {
+  const payload = {
+    tsumego_id: tsumegoId,
+    is_correct: Boolean(isCorrect),
+    seconds,
+    hint_used: Boolean(hintUsed),
+  };
+  await enqueue('tsumego-answer', payload);
   return payload;
 }
 
