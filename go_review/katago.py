@@ -14,7 +14,6 @@ import json
 import queue
 import subprocess
 import threading
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Protocol
@@ -221,18 +220,17 @@ class KataGoEngine:
 
             expected = len(query["analyzeTurns"])
             results: dict[int, TurnAnalysis] = {}
-            deadline = time.monotonic() + self.timeout
+            # 1 回の問い合わせで何十手ぶんも頼むので、全体にかける制限時間だと
+            # 正常な解析まで打ち切ってしまう（実測でパス1に 29 分かかる局もある）。
+            # 測るべきは「応答が途絶えたか」なので、1 件受け取るたびに待ち直す。
             while len(results) < expected:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError(
-                        f"KataGo が {self.timeout:.0f} 秒以内に応答しませんでした"
-                        f"（{len(results)}/{expected} 件受信済み）"
-                    )
                 try:
-                    line = self._lines.get(timeout=remaining)
+                    line = self._lines.get(timeout=self.timeout)
                 except queue.Empty:
-                    continue
+                    raise TimeoutError(
+                        f"KataGo が {self.timeout:.0f} 秒のあいだ何も返しませんでした"
+                        f"（{len(results)}/{expected} 件受信済み）"
+                    ) from None
                 if line is None:
                     raise RuntimeError("KataGo からの応答が途絶しました")
                 line = line.strip()
