@@ -79,6 +79,9 @@ def cmd_analyze(settings: Settings, log: Log, args) -> int:
         log(f"解説文はテンプレート生成になります（{client.unavailable_reason}）")
 
     with Database(settings.db_path) as db:
+        stale = db.reclaim_stale_analyses()
+        if stale:
+            log(f"前回中断した {stale} 局を解析対象に戻しました")
         pending = db.unanalyzed_games()
         if args.game_id:
             pending = [r for r in pending if r["id"] == args.game_id]

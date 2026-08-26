@@ -292,7 +292,26 @@ class Database:
         )
 
     def unanalyzed_count(self) -> int:
-        return self.scalar("SELECT COUNT(*) FROM games WHERE status = '未解析'") or 0
+        """まだ解析結果が出ていない棋譜の数。
+
+        '解析中' も数える。バッチが落ちるとその状態のまま残るため、
+        '未解析' だけを数えると「残り 0 局」と出てしまい実態と食い違う。
+        """
+        return self.scalar(
+            "SELECT COUNT(*) FROM games WHERE status IN ('未解析','解析中')"
+        ) or 0
+
+    def reclaim_stale_analyses(self) -> int:
+        """中断されて '解析中' のまま残った棋譜を '未解析' に戻す。
+
+        バッチは同時に 1 つしか動かないので、開始時点で '解析中' のものは
+        前回の中断の残骸とみなしてよい。
+        """
+        rows = self.query("SELECT id FROM games WHERE status = '解析中'")
+        if rows:
+            self.execute("UPDATE games SET status = '未解析' WHERE status = '解析中'")
+            self.commit()
+        return len(rows)
 
     # ---------------------------------------------------------- 手
 
