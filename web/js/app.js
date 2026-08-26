@@ -918,3 +918,19 @@ window.addEventListener('load', () => {
 });
 window.addEventListener('offline', () => setStatus('オフライン: キャッシュ済みのデータで動作します', 'warn'));
 window.addEventListener('online', () => setStatus('オンラインに復帰しました', 'ok'));
+
+// 最新を取れず前回の内容で代用したときの知らせ。原因は断定せず、
+// 「最新ではない」ことと、やり直す手段だけを示す。
+// URL に時刻を付けるのは、Service Worker のキャッシュを避けて必ず
+// ネットワークへ出すため。ログインが切れている場合、これをしないと
+// ログイン画面まで辿り着けない。
+window.addEventListener('goreview:stale', () => {
+  statusBar.replaceChildren(
+    el('span', {}, '最新のデータを取得できませんでした。表示は前回の内容です。'),
+    el('button', {
+      class: 'link',
+      onclick: () => { window.location.href = `${location.pathname}?r=${Date.now()}`; },
+    }, '取得し直す'),
+  );
+  statusBar.className = 'status warn';
+});

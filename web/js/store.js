@@ -53,6 +53,25 @@ function dataUrl(path) {
   return `${base}/${path}`;
 }
 
+// オンラインなのに最新を取れず、前回の内容で代用したことを外へ知らせる。
+// 黙って古い内容を表示し続けると、更新されていることに気づけない
+// （実際それで解析結果が届いていないと誤解した）。
+//
+// 原因は断定しない。Cloudflare Access のログイン切れが多いが、通信の
+// 一時的な失敗のこともある。どちらにせよ利用者にとって大事なのは
+// 「今見えているのは最新ではない」という一点なので、それだけを伝える。
+let servedStale = false;
+
+export function isServingStale() {
+  return servedStale;
+}
+
+function markStale(path) {
+  if (servedStale) return;
+  servedStale = true;
+  window.dispatchEvent(new CustomEvent('goreview:stale', { detail: { path } }));
+}
+
 export async function loadJson(path, { force = false } = {}) {
   const key = `data:${path}`;
   if (!force && !navigator.onLine) {
@@ -62,12 +81,22 @@ export async function loadJson(path, { force = false } = {}) {
   try {
     const res = await fetch(dataUrl(path), { cache: 'no-cache' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // ログイン画面へ飛ばされると JSON のつもりが HTML で返る。
+    // 見た目は 200 なので、中身の型で判断する。
+    if (!/json/i.test(res.headers.get('content-type') || '')) {
+      throw new Error('データではない応答が返りました');
+    }
     const payload = await res.json();
     await idbPut(key, payload);
     return payload;
   } catch (err) {
     const cached = await idbGet(key);
-    if (cached) return cached;
+    if (cached) {
+      // 代用したときだけ警告する。取得も代用もできなかった場合は
+      // 呼び出し元がエラーとして扱うので、ここでは黙っておく。
+      if (navigator.onLine) markStale(path);
+      return cached;
+    }
     throw err;
   }
 }
