@@ -128,7 +128,18 @@ async function viewHome() {
     el('section', { class: 'cards' }, cards),
     el('h2', { class: 'section-title' }, '対局一覧'),
     list,
+    // いつ時点のデータを見ているかを出す。古い画面を掴んでいても
+    // 表示だけでは気づけないため（実際それで解析結果が届いていないと誤解した）。
+    el('p', { class: 'muted small' }, `データ更新: ${_stamp(index.generated_at)}`),
   );
+}
+
+function _stamp(iso) {
+  if (!iso) return '不明';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '不明';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 // ---------------------------------------------------------------- 棋譜リプレイ
@@ -895,6 +906,14 @@ window.addEventListener('load', () => {
   store.prefetch();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
+    // 新しい Service Worker に切り替わったら読み込み直す。
+    // これがないと、更新した直後の1回だけ古い画面が表示されてしまう。
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloading) return;
+      reloading = true;
+      window.location.reload();
+    });
   }
 });
 window.addEventListener('offline', () => setStatus('オフライン: キャッシュ済みのデータで動作します', 'warn'));

@@ -1,7 +1,9 @@
 // オフライン動作のためのキャッシュ。
 // 学習ログは端末側を正とせず、オンライン復帰時にクラウド（解析機）へ送る。
 
-const CACHE = 'go-review-v3';
+// キャッシュ名を変えると、activate で古いキャッシュが捨てられる。
+// アプリの取得方法を変えたときは必ず上げること。
+const CACHE = 'go-review-v4';
 const SHELL = [
   './',
   './index.html',
@@ -47,20 +49,21 @@ self.addEventListener('fetch', (event) => {
     );
     return;
   }
-  // アプリシェルは stale-while-revalidate。
-  // キャッシュ優先だけにすると、更新したコードが端末に永久に届かない。
+  // アプリ本体もネットワーク優先。キャッシュは圏外のときの控えに徹する。
+  //
+  // 以前は stale-while-revalidate（キャッシュを返しつつ裏で更新）にしていたが、
+  // これだと更新が必ず1回遅れて届く。開いて見て閉じる使い方だと、いつまでも
+  // 古い画面のままになる。実際、詰碁機能を追加したあとも端末には旧画面が
+  // 表示され続けた。表示が古いと解析結果を見誤るので、鮮度を優先する。
   event.respondWith(
-    caches.match(event.request).then((hit) => {
-      const network = fetch(event.request)
-        .then((res) => {
-          if (res && res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-          }
-          return res;
-        })
-        .catch(() => hit);
-      return hit || network;
-    }),
+    fetch(event.request)
+      .then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(event.request)),
   );
 });
