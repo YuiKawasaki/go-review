@@ -13,6 +13,7 @@ from typing import Optional
 
 from .config import Settings
 from .db import Database, dumps, loads
+from .refutations import load_refutations
 from .srs import accuracy, next_due
 
 
@@ -162,6 +163,7 @@ def due_tsumego(
             "answer_note": r["answer_note"],
             "interactive": bool(r["position_sgf"]),
             "first_time": r["next_due_at"] is None,
+            "refutations": load_refutations(db, r["id"]),
         }
         for r in ordered[:limit]
     ]

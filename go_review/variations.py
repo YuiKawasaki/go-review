@@ -126,21 +126,39 @@ def pv_comments(
             to_move = opposite(to_move)
             continue
 
+        # 「打ち手から見た相手」と「学習者から見た相手」が入れ替わるため、
+        # 打たれる側を毎回どちらなのか言い直す。ここを "相手" で固定すると、
+        # 相手の着手を説明する行で自分の石を指してしまい意味が反転する。
+        side = "自分" if to_move == my_color else "相手"
+        target = "相手" if to_move == my_color else "あなた"
+
         parts: list[str] = []
         if captured:
-            parts.append(f"石を {len(captured)} 子取る")
+            parts.append(f"{target}の石を {len(captured)} 子取る")
         _, libs = board.group(coord)
         if _puts_in_atari(board, coord, enemy):
-            parts.append("相手をアタリにする")
+            parts.append(f"{target}をアタリにする")
         if _connects(board, coord, to_move):
             parts.append("継いで切断を防ぐ")
         if len(libs) <= 2 and not captured:
-            parts.append("自分の薄みに注意")
+            parts.append("この石は呼吸点が少なく薄い")
         after_libs = _min_liberties(board, enemy)
         if after_libs < before_libs and not parts:
-            parts.append("相手の呼吸点を詰める")
+            parts.append(f"{target}の呼吸点を詰める")
+        if not parts:
+            # ここまでで何も言えないと「この地点を占める」ばかりが並んで
+            # 手順を読んでも意味が取れない。盤面から確実に言えることだけ足す。
+            touches_own = any(board.get(n) == to_move for n in board.neighbors(coord))
+            touches_enemy = any(board.get(n) == enemy for n in board.neighbors(coord))
+            if touches_own and touches_enemy:
+                parts.append("自分の石を伸ばして相手に迫る")
+            elif touches_own:
+                parts.append("自分の石を伸ばす")
+            elif touches_enemy:
+                parts.append(f"{target}の石に迫る")
+            else:
+                parts.append("離れた場所に新しく打つ")
 
-        side = "自分" if to_move == my_color else "相手"
         text = "／".join(parts) if parts else "この地点を占める"
         out.append(f"{side}: {text}")
         to_move = opposite(to_move)

@@ -6,6 +6,8 @@
 
 import { BoardView } from './board.js';
 import { Board, buildStates, coordToGtp, gtpToCoord, opposite, parseSgf } from './goban.js';
+import { renderExplanation } from './glossary.js';
+import { createSequencePlayer } from './sequence.js';
 import * as store from './store.js';
 
 const app = document.getElementById('app');
@@ -504,6 +506,74 @@ async function viewGame(gameId) {
 
 // ---------------------------------------------------------------- 問題演習
 
+// 答え合わせのあとに見せる手順を組み立てる。
+//
+// refutations は「その手を打つとどうなるか」の一覧で、押された手が
+// その中にあれば咎められる手順を、無ければ正解手順だけを見せる。
+// 候補に無い手は、AI が読む価値も無いと判断した手なので、そう伝える。
+function buildSequences(problem, playedGtp) {
+  const refs = problem.refutations || [];
+  const key = (playedGtp || '').toUpperCase();
+  const best = refs.find((r) => r.kind === 'best');
+  const played = refs.find((r) => (r.move || '').toUpperCase() === key);
+  const out = [];
+
+  if (played && played !== best) {
+    out.push({
+      key: 'played',
+      label: 'あなたの手のあと',
+      pv: played.pv,
+      comments: played.comments,
+      note: played.kind === 'actual'
+        ? 'これは実戦で実際に打った手です。'
+        : (played.winrate === null || played.winrate === undefined
+          ? ''
+          : `この手のあと、あなたの勝ちやすさは ${Math.round(played.winrate)}% です。`),
+    });
+  }
+  if (best) {
+    out.push({
+      key: 'best',
+      label: played === best ? 'この手で決まります' : '正解の手順',
+      pv: best.pv,
+      comments: best.comments,
+      note: best.winrate === null || best.winrate === undefined
+        ? ''
+        : `この手順なら、あなたの勝ちやすさは ${Math.round(best.winrate)}% を保てます。`,
+    });
+  }
+  return { sequences: out, played, best };
+}
+
+// 手順の節をまるごと組み立てる。見せられる手順が 1 つも無いときは
+// 見出しごと出さない（「用意できていません」とだけ書かれた節が残ると
+// 壊れているように見える）。
+function sequenceSection(problem, playedGtp, view, size, state) {
+  const { sequences, played } = buildSequences(problem, playedGtp);
+  if (!sequences.length) return [];
+  const player = createSequencePlayer({
+    view,
+    size,
+    startState: state,
+    firstColor: problem.player_to_move,
+    sequences,
+  });
+  return [
+    el('h3', { class: 'seq-title' }, '盤で手順を確かめる'),
+    unlistedNote(problem, playedGtp, played),
+    player.element,
+  ];
+}
+
+// 手順を用意できなかった手のときだけ、その旨を一行で伝える。
+// 「候補に無い手」と「ほとんど読まれず手順が作れなかった手」を
+// 区別しても学習者には意味が無いので、まとめて同じ言い方にする。
+function unlistedNote(problem, playedGtp, played) {
+  if (played || !(problem.refutations || []).length) return null;
+  return el('p', { class: 'muted small' },
+    `${playedGtp} は、AI がほとんど読んでいない手です（有力ではないと見ています）。正解の手順と見比べてみてください。`);
+}
+
 async function viewQuiz() {
   app.replaceChildren(el('p', { class: 'loading' }, '問題を読み込み中…'));
   const [due, all] = await Promise.all([
@@ -589,7 +659,9 @@ async function viewQuiz() {
         resultBox,
         el('div', { class: `verdict verdict-${verdict === '不正解' ? 'wrong' : 'ok'}` }, verdict),
         isActual ? el('p', { class: 'muted' }, 'これが実戦で打った手です。') : null,
-        el('p', { class: 'explanation' }, problem.explanation || ''),
+        ...sequenceSection(problem, gtp, view, size, state),
+        el('h3', { class: 'seq-title' }, '解説'),
+        renderExplanation(problem.explanation || ''),
         el('div', { class: 'row' }, (problem.tags || []).map((t) => el('span', { class: 'tag' }, t))),
         el('div', { class: 'row' }, [
           el('button', {
@@ -706,10 +778,14 @@ async function viewTsumegoQuiz() {
       view.interactive = false;
       view.setState(state, { lastMove: coord, ghosts, numbers: state.numbers });
 
+      const playedGtp = coordToGtp(coord, size);
+
       fill(
         resultBox,
         el('div', { class: `verdict verdict-${isCorrect ? 'ok' : 'wrong'}` }, isCorrect ? '正解' : '不正解'),
-        el('p', { class: 'explanation' }, hit && hit.note ? hit.note : (problem.answer_note || '')),
+        ...sequenceSection(problem, playedGtp, view, size, state),
+        el('h3', { class: 'seq-title' }, '解説'),
+        renderExplanation(hit && hit.note ? hit.note : (problem.answer_note || '')),
         problem.theme_tag ? el('div', { class: 'row' }, [el('span', { class: 'tag' }, problem.theme_tag)]) : null,
         el('p', { class: 'muted small' }, isCorrect
           ? '次に出るのは少し先になります。'

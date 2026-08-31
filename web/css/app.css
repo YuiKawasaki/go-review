@@ -227,6 +227,26 @@ input.small { max-width: 100px; }
 .verdict-ok { color: var(--ok); }
 .verdict-wrong { color: var(--bad); }
 
+/* ------------------------------------------------ 手順プレイヤー・用語 */
+
+.seq-title { font-size: 15px; margin: 16px 0 6px; }
+.sequence { margin: 6px 0 4px; }
+.seq-tabs { flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.seq-single { font-weight: 600; }
+.seq-controls { align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 手数の表示は幅が変わると ◀▶ が動いてしまうので固定する。 */
+.seq-count { min-width: 92px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* 用語はリンクではなくボタン。押すと下に意味が出る。 */
+.term {
+  background: none; border: none; padding: 0; font: inherit; color: var(--accent);
+  border-bottom: 1px dotted var(--accent); cursor: pointer;
+}
+.term-note {
+  background: var(--surface-2); border-left: 3px solid var(--accent);
+  padding: 10px 12px; border-radius: 8px; margin: 10px 0 0; font-size: 14px;
+}
+
 /* ---------------------------------------------------------- 詰碁 */
 
 .counter { display: flex; align-items: center; gap: 8px; margin: 10px 0; }

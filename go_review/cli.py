@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import Settings, load_settings
-from .db import Database
+from .db import Database, dumps, loads
 from .katago import get_engine, is_stub
 
 
@@ -245,6 +245,14 @@ def cmd_seed_tsumego(settings: Settings, log: Log, args) -> int:
         log("KataGo がありません。正解手を検証できないので中止します。")
         return 1
 
+    if args.fill_missing:
+        from .tsumego_seed import fill_missing_refutations
+
+        with Database(settings.db_path) as db:
+            done = fill_missing_refutations(settings, db, log, visits=args.visits)
+        log(f"手順を作りました: {done} 問")
+        return 0
+
     only = [t.strip() for t in (args.only or "").split(",") if t.strip()] or None
     verified = verify_candidates(settings, log, visits=args.visits, only=only)
     if not verified:
@@ -257,6 +265,146 @@ def cmd_seed_tsumego(settings: Settings, log: Log, args) -> int:
     with Database(settings.db_path) as db:
         count = import_verified(db, verified)
     log(f"詰碁を登録しました: {count} 問")
+    return 0
+
+
+def cmd_build_refutations(settings: Settings, log: Log, args) -> int:
+    """既存の解析結果から「その手を打つとどうなるか」の手順を組み立てる。
+
+    KataGo は使わないので、解析バッチと同時に走らせても構わない。
+    """
+    from .refutations import build_all, build_for_game_problems
+
+    with Database(settings.db_path) as db:
+        if args.game:
+            total = build_for_game_problems(db, args.game, settings, log)
+        else:
+            total = build_all(db, settings, log)
+    return 0 if total else 1
+
+
+def cmd_deepen_problems(settings: Settings, log: Log, args) -> int:
+    """既存の問題の局面だけを解析し直して、候補手を上位まで揃える。
+
+    以前の解析は候補手を 3 手しか残していなかったため、学習者が押した手が
+    そこに無いことが多い。1 局面ずつなので、対局まるごとの再解析より短い。
+    途中で止めても、済んだところまでは残る（再実行すると続きから）。
+    """
+    from .analysis import CANDIDATE_COUNT, CANDIDATE_PV_MOVES
+    from .katago import get_engine
+    from .refutations import build_for_game_problems
+    from .sgf import parse_game
+
+    if not settings.katago_available:
+        log("KataGo がありません。再解析できないので中止します。")
+        return 1
+
+    with Database(settings.db_path) as db:
+        rows = db.query(
+            "SELECT p.id AS problem_id, p.game_id, p.move_no, g.sgf, g.my_color "
+            "FROM problems p JOIN games g ON g.id = p.game_id ORDER BY p.id"
+        )
+        targets = []
+        for row in rows:
+            move_row = db.query_one(
+                "SELECT candidates FROM moves WHERE game_id = ? AND move_no = ?",
+                (row["game_id"], row["move_no"]),
+            )
+            have = len(loads(move_row["candidates"], []) or []) if move_row else 0
+            if args.force or have < CANDIDATE_COUNT:
+                targets.append(row)
+        if args.limit:
+            targets = targets[: args.limit]
+        if not targets:
+            log("すべての問題で候補手が揃っています。")
+            return 0
+
+        log(f"再解析する局面: {len(targets)} 件（1 局面 {settings.pass2_visits} visits）")
+        engine = get_engine(settings, allow_stub=False)
+        touched: set[str] = set()
+        done = 0
+        try:
+            for row in targets:
+                turn = row["move_no"] - 1
+                game = parse_game(row["sgf"])
+                try:
+                    analysis = engine.analyze(
+                        game, [turn], max_visits=settings.pass2_visits
+                    )[turn]
+                except Exception as exc:
+                    log(f"{row['problem_id']}: 解析できませんでした（{exc}）")
+                    continue
+                color = row["my_color"]
+                candidates = [
+                    {
+                        "coord": c.gtp,
+                        "winrate": round(c.winrate_for(color), 2),
+                        "score": round(c.score_for(color), 2),
+                        "visits": c.visits,
+                        "pv": c.pv[:CANDIDATE_PV_MOVES],
+                    }
+                    for c in analysis.moves[:CANDIDATE_COUNT]
+                ]
+                db.execute(
+                    "UPDATE moves SET candidates = ? WHERE game_id = ? AND move_no = ?",
+                    (dumps(candidates), row["game_id"], row["move_no"]),
+                )
+                db.commit()
+                touched.add(row["game_id"])
+                done += 1
+                log(f"{row['problem_id']}: 候補手 {len(candidates)} 手を保存（{done}/{len(targets)}）")
+        finally:
+            engine.close()
+
+        for game_id in sorted(touched):
+            build_for_game_problems(db, game_id, settings, log)
+    log(f"再解析が終わりました: {done} / {len(targets)} 局面")
+    return 0
+
+
+def cmd_regenerate_explanations(settings: Settings, log: Log, args) -> int:
+    """既存の問題の解説文を、今の文章の作り方で書き直す。
+
+    KataGo は使わない。ANTHROPIC_API_KEY があれば Claude、無ければ
+    テンプレートで作る（どちらも generate_explanation が判断する）。
+    """
+    from .problems import regenerate_explanation
+
+    only = [t.strip() for t in (args.only or "").split(",") if t.strip()] or None
+    client = None
+    with Database(settings.db_path) as db:
+        rows = db.query("SELECT id FROM problems ORDER BY id")
+        targets = [r["id"] for r in rows if not only or r["id"] in only]
+        if args.limit:
+            targets = targets[: args.limit]
+        if not targets:
+            log("対象の問題がありません。")
+            return 1
+
+        if settings.claude_available:
+            from .explain import ClaudeClient
+
+            client = ClaudeClient(settings)
+            if not client.available:
+                log(f"Claude を使えません（{client.unavailable_reason}）。テンプレートで作ります。")
+        else:
+            log("ANTHROPIC_API_KEY が未設定のため、テンプレートで解説を作ります。")
+
+        done = 0
+        for problem_id in targets:
+            text = regenerate_explanation(db, problem_id, settings, client)
+            if text is None:
+                log(f"{problem_id}: 材料が足りず作り直せませんでした。")
+                continue
+            done += 1
+            if args.dry_run:
+                log(f"----- {problem_id} -----")
+                log(text)
+        if args.dry_run:
+            log(f"dry-run のため保存しません（{done} 問ぶんを表示）。")
+            return 0
+        db.commit()
+    log(f"解説を書き直しました: {done} / {len(targets)} 問")
     return 0
 
 
@@ -342,7 +490,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_seed.add_argument("--visits", type=int, default=1200, help="1局面あたりの探索数")
     p_seed.add_argument("--only", default="", help="検証する候補IDをカンマ区切りで指定")
     p_seed.add_argument("--dry-run", action="store_true", help="検証だけ行い登録しない")
+    p_seed.add_argument("--fill-missing", action="store_true",
+                        help="登録済みで手順を持たない詰碁に、手順だけを付ける")
     p_seed.set_defaults(func=cmd_seed_tsumego)
+
+    p_rf = sub.add_parser("build-refutations", help="既存の解析結果から手順を組み立てる")
+    p_rf.add_argument("--game", help="この対局だけを対象にする（省略時は全局）")
+    p_rf.set_defaults(func=cmd_build_refutations)
+
+    p_dp = sub.add_parser("deepen-problems", help="既存問題の局面を再解析して候補手を増やす")
+    p_dp.add_argument("--limit", type=int, help="先頭から この件数だけ")
+    p_dp.add_argument("--force", action="store_true", help="候補手が揃っていても解析し直す")
+    p_dp.set_defaults(func=cmd_deepen_problems)
+
+    p_re = sub.add_parser("regenerate-explanations", help="既存問題の解説文を作り直す")
+    p_re.add_argument("--only", help="問題ID をカンマ区切りで指定")
+    p_re.add_argument("--limit", type=int, help="先頭から この件数だけ")
+    p_re.add_argument("--dry-run", action="store_true", help="保存せず内容を表示する")
+    p_re.set_defaults(func=cmd_regenerate_explanations)
 
     p_sv = sub.add_parser("serve", help="検討モード用ローカルサーバ")
     p_sv.set_defaults(func=cmd_serve)

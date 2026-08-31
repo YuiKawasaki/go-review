@@ -112,6 +112,18 @@ CREATE TABLE IF NOT EXISTS variations (
     PRIMARY KEY (game_id, move_no, branch_type)
 );
 
+CREATE TABLE IF NOT EXISTS refutations (
+    problem_id  TEXT NOT NULL,
+    move        TEXT NOT NULL,
+    kind        TEXT,
+    pv_moves    TEXT,
+    pv_comments TEXT,
+    winrate     REAL,
+    score       REAL,
+    visits      INTEGER,
+    PRIMARY KEY (problem_id, move)
+);
+
 CREATE TABLE IF NOT EXISTS tsumego (
     id             TEXT PRIMARY KEY,
     source         TEXT,
@@ -191,6 +203,7 @@ CREATE INDEX IF NOT EXISTS idx_problems_game  ON problems(game_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_prob   ON reviews(problem_id);
 CREATE INDEX IF NOT EXISTS idx_state_due      ON problem_state(next_due_at);
 CREATE INDEX IF NOT EXISTS idx_games_played   ON games(played_at);
+CREATE INDEX IF NOT EXISTS idx_refut_problem  ON refutations(problem_id);
 """
 
 

@@ -13,8 +13,9 @@ from .db import Database, dumps, loads
 from .goban import board_at, weakest_group
 from .explain import ClaudeClient, MoveContext, generate_explanation, suggest_tags
 from .katago import TurnAnalysis
-from .sgf import Game, coord_to_gtp, position_sgf
-from .variations import opponent_missed_punishment
+from .sgf import Game, coord_to_gtp, parse_game, position_sgf
+from .refutations import load_refutations
+from .variations import BRANCH_BEST, BRANCH_PUNISH, opponent_missed_punishment, pv_comments
 
 HINT_LEVELS = 3
 
@@ -262,6 +263,96 @@ def compute_difficulty(
     return max(1, min(5, base + concentration))
 
 
+def regenerate_explanation(
+    db: Database,
+    problem_id: str,
+    settings: Settings,
+    client: Optional[ClaudeClient] = None,
+) -> Optional[str]:
+    """既存の問題の解説文を作り直す。
+
+    KataGo は再実行しない。解説に必要な事実（勝率・目数・読み筋）は
+    解析時に moves / variations へ保存済みなので、そこから組み直す。
+    読み筋への一言だけは言い回しを見直しているのでここで作り直す。
+
+    作り直せる材料が無い問題では None を返し、既存の文章を残す。
+    """
+    row = db.query_one("SELECT * FROM problems WHERE id = ?", (problem_id,))
+    if not row:
+        return None
+    game_row = db.query_one(
+        "SELECT sgf, move_count FROM games WHERE id = ?", (row["game_id"],)
+    )
+    move_row = db.query_one(
+        "SELECT * FROM moves WHERE game_id = ? AND move_no = ?",
+        (row["game_id"], row["move_no"]),
+    )
+    if not game_row or not move_row:
+        return None
+
+    correct = loads(row["correct_moves"], []) or []
+    if not correct:
+        return None
+    my_color = row["player_to_move"]
+    game = parse_game(game_row["sgf"])
+    move_no = row["move_no"]
+
+    candidates = loads(move_row["candidates"], []) or []
+    best_move = correct[0].get("coord") or (move_row["best_move"] or "")
+    best_winrate = next(
+        (c.get("winrate") for c in candidates
+         if (c.get("coord") or "").upper() == (best_move or "").upper()),
+        None,
+    )
+    if best_winrate is None:
+        # 候補手の記録が無い古い解析。最善手を打った場合の勝率が分からないので、
+        # 実戦の手の勝率で代用せず、作り直しを見送る（数字を作らない）。
+        return None
+
+    def variation(branch: str) -> tuple[list[str], list[str], Optional[float]]:
+        var = db.query_one(
+            "SELECT pv_moves, end_winrate FROM variations "
+            "WHERE game_id = ? AND move_no = ? AND branch_type = ?",
+            (row["game_id"], move_no, branch),
+        )
+        if not var:
+            return [], [], None
+        pv = loads(var["pv_moves"], []) or []
+        start_turn = move_no - 1 if branch == BRANCH_BEST else move_no
+        return pv, pv_comments(game, start_turn, pv, my_color, branch), var["end_winrate"]
+
+    best_pv, best_comments, _ = variation(BRANCH_BEST)
+    punish_pv, punish_comments, punish_end = variation(BRANCH_PUNISH)
+
+    context = MoveContext(
+        move_no=move_no,
+        my_color=my_color,
+        actual_move=row["actual_move"] or "",
+        actual_winrate_drop=abs(row["actual_delta"] or 0.0),
+        winrate_before=move_row["winrate_before"] or 0.0,
+        winrate_after=move_row["winrate_after"] or 0.0,
+        best_move=best_move,
+        best_winrate=best_winrate,
+        score_before=move_row["score_before"],
+        score_after=move_row["score_after"],
+        tags=loads(row["tags"], []) or [],
+        best_pv=best_pv,
+        punish_pv=punish_pv,
+        best_pv_comments=best_comments,
+        punish_pv_comments=punish_comments,
+        punish_end_winrate=punish_end,
+        # 相手が咎め方を見落としていたかは解析結果を持たないと判定できない。
+        # 分からないものは書かない。
+        opponent_missed=None,
+        total_moves=game_row["move_count"] or game.move_count,
+    )
+    text = generate_explanation(client, context)
+    db.execute(
+        "UPDATE problems SET explanation = ? WHERE id = ?", (text, problem_id)
+    )
+    return text
+
+
 def problem_payload(db: Database, problem_id: str) -> Optional[dict]:
     """PWA 配信用に 1 問を JSON 化する（FR-06 のデータ構造）。"""
     row = db.query_one("SELECT * FROM problems WHERE id = ?", (problem_id,))
@@ -286,4 +377,6 @@ def problem_payload(db: Database, problem_id: str) -> Optional[dict]:
         "streak": state["streak"] if state else 0,
         "next_due_at": state["next_due_at"] if state else None,
         "graduated": bool(state["graduated"]) if state else False,
+        # 学習者が押した手ごとの進行。押された手が無いときは空でよい。
+        "refutations": load_refutations(db, problem_id),
     }

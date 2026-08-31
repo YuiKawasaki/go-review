@@ -20,6 +20,10 @@ from .goban import board_at
 from .katago import Engine, TurnAnalysis, is_stub
 from .sgf import Game, coord_to_gtp, parse_game
 
+# 1 局面あたり保存する候補手の数と、その読み筋の長さ。
+CANDIDATE_COUNT = 8
+CANDIDATE_PV_MOVES = 10
+
 if TYPE_CHECKING:  # 実行時の循環 import を避ける
     from .explain import ClaudeClient
 
@@ -218,15 +222,18 @@ def _persist_moves(
         wr_before = before.winrate_for(color)
         wr_after = after.winrate_for(color)
         best = before.best()
+        # 上位 8 手ぶん残す。練習画面で学習者が押した手に対して
+        # 「その手だと相手がどう来るか」を見せるのに使う。KataGo は
+        # どのみちこれらを返しているので、解析時間は増えない。
         candidates = [
             {
                 "coord": c.gtp,
                 "winrate": round(c.winrate_for(color), 2),
                 "score": round(c.score_for(color), 2),
                 "visits": c.visits,
-                "pv": c.pv[:8],
+                "pv": c.pv[:CANDIDATE_PV_MOVES],
             }
-            for c in before.moves[:3]
+            for c in before.moves[:CANDIDATE_COUNT]
         ]
         db.save_move(
             game_id,
