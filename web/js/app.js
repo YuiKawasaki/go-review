@@ -558,11 +558,8 @@ function sequenceSection(problem, playedGtp, view, size, state) {
     firstColor: problem.player_to_move,
     sequences,
   });
-  return [
-    el('h3', { class: 'seq-title' }, '盤で手順を確かめる'),
-    unlistedNote(problem, playedGtp, played),
-    player.element,
-  ];
+  // 見出しは付けない。盤のすぐ下に置くので、何の操作か一目で分かる。
+  return [unlistedNote(problem, playedGtp, played), player.element];
 }
 
 // 手順を用意できなかった手のときだけ、その旨を一行で伝える。
@@ -615,12 +612,22 @@ async function viewQuiz() {
     let answered = null;
 
     const canvas = el('canvas', { class: 'board' });
-    const hintBox = el('div', { class: 'hints' });
-    const resultBox = el('div', { class: 'result' });
+    // 答え合わせ前だけ必要なもの。答えたら隠して、盤のすぐ下に
+    // 手順プレイヤーを出す余白を作る（スクロールせず ▶ を押せるように）。
+    const tapHint = el('p', { class: 'muted small' }, '交点を2回タップで確定します。');
     const reasonInput = el('input', {
       type: 'text',
       placeholder: 'なぜその手を選んだか（任意・スキップ可）',
     });
+    const hintRow = el('div', { class: 'row' }, [
+      el('button', { onclick: () => showHint() }, 'ヒント'),
+      el('button', { class: 'link', onclick: () => { position += 1; renderProblem(); } }, 'とばす'),
+    ]);
+    const hintBox = el('div', { class: 'hints' });
+    // 答え合わせの直後、盤のすぐ下に出す節。手順を送る ▶ と一言コメントが
+    // ここに入るので、盤を見ながらスクロールせずに操作できる。
+    const seqTop = el('div', { class: 'seq-top' });
+    const resultBox = el('div', { class: 'result' });
 
     const view = new BoardView(canvas, {
       size,
@@ -655,11 +662,21 @@ async function viewQuiz() {
         numbers: state.numbers,
       });
 
+      // 答え合わせ前の案内・入力は用が済んだので隠す。ここで空けた分だけ、
+      // 盤のすぐ下に手順プレイヤーが収まりやすくなる。
+      tapHint.hidden = true;
+      reasonInput.hidden = true;
+      hintRow.hidden = true;
+      hintBox.hidden = true;
+
       fill(
-        resultBox,
+        seqTop,
         el('div', { class: `verdict verdict-${verdict === '不正解' ? 'wrong' : 'ok'}` }, verdict),
         isActual ? el('p', { class: 'muted' }, 'これが実戦で打った手です。') : null,
         ...sequenceSection(problem, gtp, view, size, state),
+      );
+      fill(
+        resultBox,
         el('h3', { class: 'seq-title' }, '解説'),
         renderExplanation(problem.explanation || ''),
         el('div', { class: 'row' }, (problem.tags || []).map((t) => el('span', { class: 'tag' }, t))),
@@ -694,12 +711,10 @@ async function viewQuiz() {
       ]),
       el('p', { class: 'prompt' }, 'このとき、どう打つべきだったか。'),
       canvas,
-      el('p', { class: 'muted small' }, '交点を2回タップで確定します。'),
+      seqTop,
+      tapHint,
       reasonInput,
-      el('div', { class: 'row' }, [
-        el('button', { onclick: () => showHint() }, 'ヒント'),
-        el('button', { class: 'link', onclick: () => { position += 1; renderProblem(); } }, 'とばす'),
-      ]),
+      hintRow,
       hintBox,
       resultBox,
     );
@@ -750,7 +765,17 @@ async function viewTsumegoQuiz() {
     let answered = false;
 
     const canvas = el('canvas', { class: 'board' });
+    const tapHint = el('p', { class: 'muted small' }, '交点を2回タップで確定します。');
+    const hintRow = el('div', { class: 'row' }, [
+      el('button', {
+        disabled: (problem.hints || []).length ? null : 'disabled',
+        onclick: () => showHint(),
+      }, 'ヒント'),
+      el('button', { class: 'link', onclick: () => { position += 1; renderTsumego(); } }, 'とばす'),
+    ]);
     const hintBox = el('div', { class: 'hints' });
+    // 答え合わせの直後、盤のすぐ下に出す節（練習画面と同じ理由）。
+    const seqTop = el('div', { class: 'seq-top' });
     const resultBox = el('div', { class: 'result' });
 
     const view = new BoardView(canvas, { size, onPlay: (coord) => submit(coord) });
@@ -780,10 +805,17 @@ async function viewTsumegoQuiz() {
 
       const playedGtp = coordToGtp(coord, size);
 
+      tapHint.hidden = true;
+      hintRow.hidden = true;
+      hintBox.hidden = true;
+
       fill(
-        resultBox,
+        seqTop,
         el('div', { class: `verdict verdict-${isCorrect ? 'ok' : 'wrong'}` }, isCorrect ? '正解' : '不正解'),
         ...sequenceSection(problem, playedGtp, view, size, state),
+      );
+      fill(
+        resultBox,
         el('h3', { class: 'seq-title' }, '解説'),
         renderExplanation(hit && hit.note ? hit.note : (problem.answer_note || '')),
         problem.theme_tag ? el('div', { class: 'row' }, [el('span', { class: 'tag' }, problem.theme_tag)]) : null,
@@ -820,14 +852,9 @@ async function viewTsumegoQuiz() {
         ? `${problem.theme_tag}の問題です。最善の一手はどこか。`
         : 'この局面での最善の一手はどこか。'),
       canvas,
-      el('p', { class: 'muted small' }, '交点を2回タップで確定します。'),
-      el('div', { class: 'row' }, [
-        el('button', {
-          disabled: (problem.hints || []).length ? null : 'disabled',
-          onclick: () => showHint(),
-        }, 'ヒント'),
-        el('button', { class: 'link', onclick: () => { position += 1; renderTsumego(); } }, 'とばす'),
-      ]),
+      seqTop,
+      tapHint,
+      hintRow,
       hintBox,
       resultBox,
     );

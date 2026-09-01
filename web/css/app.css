@@ -229,8 +229,9 @@ input.small { max-width: 100px; }
 
 /* ------------------------------------------------ 手順プレイヤー・用語 */
 
+.seq-top { margin: 6px 0 4px; }
 .seq-title { font-size: 15px; margin: 16px 0 6px; }
-.sequence { margin: 6px 0 4px; }
+.sequence { margin: 2px 0 4px; }
 .seq-tabs { flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .seq-single { font-weight: 600; }
 .seq-controls { align-items: center; gap: 8px; flex-wrap: wrap; }
