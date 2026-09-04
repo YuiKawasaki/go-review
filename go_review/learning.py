@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import random
 import uuid
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
@@ -132,6 +133,13 @@ def due_tsumego(
     「一度でも間違えて期日超過した問題」を最優先し、次いで初見の問題を
     難易度の低い順に出す、というシンプルな方針にしている（急に難しい問題
     ばかり続かないように）。
+
+    今日ぶんを解き終えたところで打ち切ると、そこで練習をやめてしまう。
+    そこで、今日の分（上の優先順・上限件数）のあとに、卒業していない
+    詰碁（間違えたまま・まだ卒業していないもの）を残り全部、ランダムな
+    順で続ける。期日が来ていないものも対象にする — SRS の間隔を破って
+    早く出すというより、「今日はここまで」を無くして手が空いた分だけ
+    練習を続けられるようにするための追加分なので、優先順の後ろに置く。
     """
     on_date = on_date or _today_str()
     limit = limit or (settings.daily_review_limit if settings else 10)
@@ -145,9 +153,18 @@ def due_tsumego(
         due = r["next_due_at"] or ""
         return (0 if not first_time else 1, due, r["difficulty"] or 0)
 
-    ordered = sorted(rows, key=sort_key)
-    return [
-        {
+    primary = sorted(rows, key=sort_key)[:limit]
+    primary_ids = {r["id"] for r in primary}
+
+    extra_rows = db.query(
+        "SELECT * FROM tsumego WHERE graduated = 0 AND position_sgf IS NOT NULL "
+        "AND position_sgf != ''"
+    )
+    extra = [r for r in extra_rows if r["id"] not in primary_ids]
+    random.shuffle(extra)
+
+    def payload(r: object) -> dict:
+        return {
             "tsumego_id": r["id"],
             "theme_tag": r["theme_tag"],
             "source": r["source"],
@@ -165,8 +182,8 @@ def due_tsumego(
             "first_time": r["next_due_at"] is None,
             "refutations": load_refutations(db, r["id"]),
         }
-        for r in ordered[:limit]
-    ]
+
+    return [payload(r) for r in primary] + [payload(r) for r in extra]
 
 
 # ---------------------------------------------------------------- 日次ログ

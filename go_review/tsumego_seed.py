@@ -121,13 +121,20 @@ def _build_ld(
     """白の一団と、その内側の空き地から、黒の囲いを計算して配石を作る。
 
     黒の石を手で並べると必ず取りこぼす（囲い切れていない形を KataGo に
-    渡してしまう）ので、白の石に接する点のうち内側でないものを、
-    そのまま黒にする。こうすれば白の呼吸点は内側の空き地だけになる。
+    渡してしまう）ので、白の石・内側の空き地の両方に接する点のうち
+    どちらでもない点を、そのまま黒にする。
+
+    白の隣接点だけから作ると、内側の空き地が盤の端に接していない形
+    （盤の中央寄りへずらした形など）で漏れる。空き地のどこかが盤端の
+    外にはみ出さずに済んでいるのは、たまたま盤端が黒の代わりを
+    していただけで、ずらすとその代わりが無くなるため。内側の空き地も
+    合わせて隣接点を取れば、盤のどこに置いても正しく閉じる。
     """
     white_set = set(white_group)
     inside_set = set(inside)
+    ring_source = white_set | inside_set
     black = sorted(
-        {n for w in white_group for n in _neighbors(w)} - white_set - inside_set
+        {n for c in ring_source for n in _neighbors(c)} - white_set - inside_set
     )
     return black + _row(LD_BLACK_WALL), list(white_group) + _row(LD_WHITE_WALL)
 
@@ -234,6 +241,47 @@ _LD_SHAPES: list[tuple[str, str, int, list[tuple[int, int]], list[tuple[int, int
      [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0)]),
 ]
 
+# 眼形不足（初心者向け・目安10級）。
+#
+# 「三目の急所」「丁字四」は、囲碁で最初に習う2種類の"殺せる眼形"。
+# その同じ急所の考え方を、盤のいろいろな位置に置き直して繰り返し
+# 練習できるようにする。手を抜いた水増しではなく、初心者向けの本が
+# 同じ形を場所を変えて何度も出すのと同じ理由（置かれた場所が変わっても
+# 急所の見つけ方は同じ、というパターン認識の練習）。
+#
+# 横にずらすと、盤の左端がしていた「壁の代わり」が無くなる点に注意。
+# _build_ld を「白の隣接点だけでなく内側の空き地の隣接点からも黒を作る」
+# 形に直してあるので、ずらしても正しく閉じる（このファイルの _build_ld
+# のコメント参照）。ずらせる範囲は check_ld_shape で機械的に確かめてある
+# （盤の右端に寄せすぎると、囲む黒が薄くなって自分から取られる）。
+EYE_SHAPE_THEME = "眼形不足"
+EYE_SHAPE_DIFFICULTY = 1
+
+_EYE_SHAPE_BASES: list[
+    tuple[str, list[tuple[int, int]], list[tuple[int, int]], list[int]]
+] = [
+    ("straight3", [(0, 1), (1, 1), (2, 1), (3, 1), (3, 0)], [(0, 0), (1, 0), (2, 0)],
+     [1, 2, 3, 5]),
+    ("bent3", [(2, 0), (2, 1), (1, 1), (1, 2), (0, 2)], [(0, 0), (1, 0), (0, 1)],
+     [1, 2, 3, 4]),
+    ("t4", [(0, 1), (0, 2), (1, 2), (2, 2), (2, 1), (3, 1), (3, 0)],
+     [(0, 0), (1, 0), (2, 0), (1, 1)], [1, 2, 3]),
+]
+
+
+def _shift(stones: list[tuple[int, int]], dx: int) -> list[tuple[int, int]]:
+    return [(c + dx, r) for c, r in stones]
+
+
+_EYE_SHAPE_BEGINNER: list[
+    tuple[str, str, int, list[tuple[int, int]], list[tuple[int, int]]]
+] = [
+    (f"eyeshape-{name}-dx{dx}", EYE_SHAPE_THEME, EYE_SHAPE_DIFFICULTY,
+     _shift(white, dx), _shift(inside, dx))
+    for name, white, inside, offsets in _EYE_SHAPE_BASES
+    for dx in offsets
+]
+
 # 石を取る手筋。盤をほとんど空にしたまま出す形。
 # 死活の枠と違って地の釣り合いを作れないので、2 子以上まとめて取れる形
 # だけを置いている（1 子では目数の差が出ず、KataGo が真剣に読まない）。
@@ -263,7 +311,7 @@ def _candidates() -> list[tuple[str, str, int, list, list]]:
         seen.add(key)
         out.append((pid, theme, difficulty, black, white))
 
-    for pid, theme, difficulty, group, inside in _LD_SHAPES:
+    for pid, theme, difficulty, group, inside in [*_LD_SHAPES, *_EYE_SHAPE_BEGINNER]:
         faults = check_ld_shape(group, inside)
         if faults:
             # 形が壊れている候補を KataGo に渡しても時間の無駄なので落とす。
@@ -309,6 +357,10 @@ THEME_HINTS: dict[str, list[str]] = {
     "死活（隅の急所）": [
         "隅は辺よりも目が作りにくい場所です。",
         "白が目を2つに分けられないよう、内側の折れ曲がった点を探しましょう。",
+    ],
+    "眼形不足": [
+        "白の内側の空き地に、目が2つできるかどうかを数えてみましょう。",
+        "内側の空き地の中で、いちばん多くの方向に隣り合っている点はどこでしょうか。",
     ],
     "両アタリ": ["1手で2か所を同時に攻められる場所を探してみましょう。"],
 }

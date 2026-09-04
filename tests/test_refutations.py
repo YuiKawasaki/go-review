@@ -274,3 +274,63 @@ class TestTsumegoImport(unittest.TestCase):
         self.assertEqual([r["kind"] for r in refs], ["best"])
         self.assertEqual(refs[0]["pv"][0], "A9")
         self.assertEqual(len(refs[0]["comments"]), len(refs[0]["pv"]))
+
+
+class TestDueTsumegoExtra(unittest.TestCase):
+    """今日の優先分を終えても学習をやめさせない、という仕様の確認。
+
+    due_tsumego は「優先順の先頭 limit 件」＋「卒業していない残り全部
+    （ランダム順）」を返す。境界の件数と、卒業済みが混ざらないことを見る。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = Settings()
+        self.settings.data_dir = Path(self.tmp.name)
+        self.settings.daily_review_limit = 2
+        self.db = Database(self.settings.db_path)
+
+    def tearDown(self):
+        self.db.close()
+        self.tmp.cleanup()
+
+    def _add(self, tsumego_id, graduated=0, next_due_at=None, difficulty=1):
+        self.db.execute(
+            "INSERT INTO tsumego (id, source, theme_tag, streak, next_due_at, "
+            "graduated, size, position_sgf, player_to_move, correct_moves, "
+            "difficulty, hints) VALUES (?,?,?,0,?,?,9,?,?,?,?,?)",
+            (tsumego_id, "内蔵", "テスト", next_due_at, graduated,
+             f"(;GM[1]FF[4]SZ[9]AB[aa]PL[B])", "B",
+             dumps([{"coord": "B9", "label": "最善"}]), difficulty, dumps([])),
+        )
+        self.db.commit()
+
+    def test_extra_pool_excludes_graduated(self):
+        from go_review.learning import due_tsumego
+
+        self._add("T-a", next_due_at=None)
+        self._add("T-b", next_due_at=None)
+        self._add("T-c", next_due_at=None)
+        self._add("T-grad", graduated=1, next_due_at=None)
+
+        out = due_tsumego(self.db, on_date="2026-01-01", settings=self.settings)
+        ids = {r["tsumego_id"] for r in out}
+        self.assertNotIn("T-grad", ids)
+        self.assertEqual(ids, {"T-a", "T-b", "T-c"})
+
+    def test_primary_batch_matches_limit(self):
+        from go_review.learning import due_tsumego
+
+        for i in range(5):
+            self._add(f"T-{i}", next_due_at=None)
+
+        out = due_tsumego(self.db, on_date="2026-01-01", settings=self.settings)
+        self.assertEqual(len(out), 5, "卒業していない分は全部返る（優先分＋残り）")
+        # 先頭 limit 件が優先分。並び順の決定性はテストしない（sort_key の対象）。
+
+    def test_no_extra_when_nothing_left(self):
+        from go_review.learning import due_tsumego
+
+        self._add("T-a", next_due_at=None)
+        out = due_tsumego(self.db, on_date="2026-01-01", settings=self.settings)
+        self.assertEqual(len(out), 1)

@@ -742,10 +742,28 @@ async function viewTsumegoQuiz() {
     return;
   }
 
+  // due.tsumego は「今日の優先順ぶん（先頭）＋ 卒業していない詰碁の残り
+  // 全部（ランダム順）」の並び。前半だけを数えて、そこを超えたら
+  // 一度だけ案内を挟む（「終わり」で止めず、続けるかは選べるようにする）。
+  const primaryCount = (due.tsumego || [])
+    .slice(0, due.limit || 0)
+    .filter((t) => t.interactive).length;
   let position = 0;
+  let extraAnnounced = false;
   renderTsumego();
 
   function renderTsumego() {
+    if (!extraAnnounced && position === primaryCount && position < queue.length) {
+      extraAnnounced = true;
+      app.replaceChildren(el('div', { class: 'card' }, [
+        el('h2', {}, '今日の分は終わりました'),
+        el('p', { class: 'muted' },
+          'ここからは、まだ卒業していない詰碁を続けて練習できます（間違えた問題・新しい問題をランダムな順で出します）。'),
+        el('button', { class: 'primary', onclick: () => renderTsumego() }, '続けて練習する'),
+        el('button', { onclick: () => nav('#/home') }, 'ここでやめる'),
+      ]));
+      return;
+    }
     const problem = queue[position];
     if (!problem) {
       app.replaceChildren(el('div', { class: 'card' }, [
