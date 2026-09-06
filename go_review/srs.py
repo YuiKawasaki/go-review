@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import random
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -113,19 +114,27 @@ def due_problems(
 
     期日超過分は優先度順（敗着候補 > 悪手）に、次いで期日の古い順。
     初見（未出題）の問題も対象に含める。
+
+    この優先順だけで日々の上限件数に切ると、期日超過が上限を上回る
+    日が続く限り「毎日まったく同じ上位10問」が出続けてしまう
+    （severity_rank / 期日 / 難易度は答えるまで変化しない静的な値なので、
+    上限に収まらない分は翌日も同じ並びで弾かれ続ける）。そこで、今日の
+    優先分のあとに、卒業していない問題の残り全部を続けて返す。間違えた
+    ことのある問題を先に、それ以外をあとに、それぞれランダムな順で
+    並べる——「間違えたもの中心にランダムに」出すため。
     """
     today = today or _today()
     limit = limit or settings.daily_review_limit
-    rows = db.query(
-        """
+    base_sql = """
         SELECT p.id, p.game_id, p.move_no, p.difficulty, s.streak, s.next_due_at,
-               s.graduated, b.severity
+               s.graduated, s.last_result, b.severity
         FROM problems p
         LEFT JOIN problem_state s ON s.problem_id = p.id
         LEFT JOIN bad_moves b ON b.game_id = p.game_id AND b.move_no = p.move_no
         WHERE COALESCE(s.graduated, 0) = 0
-          AND (s.next_due_at IS NULL OR s.next_due_at <= ?)
-        """,
+    """
+    due_rows = db.query(
+        base_sql + " AND (s.next_due_at IS NULL OR s.next_due_at <= ?)",
         (today.isoformat(),),
     )
 
@@ -134,9 +143,18 @@ def due_problems(
         due = row["next_due_at"] or ""      # 未出題を先に
         return (severity_rank, due, -(row["difficulty"] or 0))
 
-    ordered = sorted(rows, key=sort_key)
-    return [
-        {
+    primary = sorted(due_rows, key=sort_key)[:limit]
+    primary_ids = {r["id"] for r in primary}
+
+    all_rows = db.query(base_sql)
+    rest = [r for r in all_rows if r["id"] not in primary_ids]
+    wrong = [r for r in rest if r["last_result"] == VERDICT_WRONG]
+    others = [r for r in rest if r["last_result"] != VERDICT_WRONG]
+    random.shuffle(wrong)
+    random.shuffle(others)
+
+    def payload(r: object) -> dict:
+        return {
             "problem_id": r["id"],
             "game_id": r["game_id"],
             "move_no": r["move_no"],
@@ -146,8 +164,8 @@ def due_problems(
             "severity": r["severity"],
             "first_time": r["next_due_at"] is None,
         }
-        for r in ordered[:limit]
-    ]
+
+    return [payload(r) for r in primary] + [payload(r) for r in wrong + others]
 
 
 def accuracy(db: Database, first_attempt_only: bool = False) -> Optional[float]:

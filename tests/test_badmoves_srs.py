@@ -148,6 +148,80 @@ class TestReviewFlow(unittest.TestCase):
         self.assertTrue(due[0]["first_time"])
 
 
+class TestDueProblemsExtra(unittest.TestCase):
+    """今日の優先分を終えても学習をやめさせない、という仕様の確認。
+
+    due_problems は「優先順の先頭 limit 件」＋「卒業していない残り全部
+    （間違えたもの中心にランダム順）」を返す。severity_rank / 期日 /
+    難易度だけで切ると、期日超過が上限を超える日が続くかぎり毎日同じ
+    上位 N 問しか出せない（すべて答えるまで変化しない静的な値なので）。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = make_settings(Path(self.tmp.name))
+        self.settings.daily_review_limit = 2
+        self.db = Database(self.settings.db_path)
+
+    def tearDown(self):
+        self.db.close()
+        self.tmp.cleanup()
+
+    def _add(self, problem_id, last_result=None, next_due_at=None, graduated=0):
+        self.db.execute(
+            "INSERT INTO problems (id, game_id, move_no, correct_moves, difficulty) "
+            "VALUES (?,?,?,?,?)",
+            (problem_id, "G-0001", 1, dumps([{"coord": "D4", "label": "最善"}]), 1),
+        )
+        self.db.execute(
+            "INSERT INTO problem_state (problem_id, streak, next_due_at, graduated, "
+            "last_result) VALUES (?,0,?,?,?)",
+            (problem_id, next_due_at, graduated, last_result),
+        )
+        self.db.commit()
+
+    def test_all_non_graduated_are_returned_beyond_limit(self):
+        for i in range(5):
+            self._add(f"P-{i}")
+        out = due_problems(self.db, self.settings, today=date(2026, 1, 1))
+        self.assertEqual(len(out), 5, "上限を超えても、卒業していない分は全部返る")
+
+    def test_graduated_excluded_even_from_extra(self):
+        self._add("P-a")
+        self._add("P-grad", graduated=1)
+        out = due_problems(self.db, self.settings, today=date(2026, 1, 1))
+        ids = {r["problem_id"] for r in out}
+        self.assertNotIn("P-grad", ids)
+
+    def test_extra_pool_puts_wrong_ones_before_others(self):
+        # 優先分（limit=2）を埋めたうえで、残りに間違えた問題を混ぜる。
+        self._add("P-due1")
+        self._add("P-due2")
+        for i in range(5):
+            self._add(f"P-wrong-{i}", last_result=VERDICT_WRONG,
+                      next_due_at="2099-01-01")
+        for i in range(5):
+            self._add(f"P-ok-{i}", last_result=VERDICT_CORRECT,
+                      next_due_at="2099-01-01")
+        out = due_problems(self.db, self.settings, today=date(2026, 1, 1))
+        self.assertEqual(len(out), 12)
+        extra_ids = [r["problem_id"] for r in out[2:]]
+        wrong_positions = [i for i, pid in enumerate(extra_ids) if pid.startswith("P-wrong")]
+        ok_positions = [i for i, pid in enumerate(extra_ids) if pid.startswith("P-ok")]
+        self.assertLess(max(wrong_positions), min(ok_positions),
+                         "間違えた問題は、そうでない問題より前に来る")
+
+    def test_not_yet_due_still_offered_as_extra(self):
+        """正解continueで先の期日になっていても、追加分としては出す。
+
+        優先分だけで終わらせず、手が空いた分だけ練習を続けられるように
+        するための追加分なので、SRS の間隔を破ってでも対象にする。
+        """
+        self._add("P-future", last_result=VERDICT_CORRECT, next_due_at="2099-01-01")
+        out = due_problems(self.db, self.settings, today=date(2026, 1, 1))
+        self.assertEqual([r["problem_id"] for r in out], ["P-future"])
+
+
 class TestDifficulty(unittest.TestCase):
     def _analysis(self, gap: float) -> TurnAnalysis:
         return TurnAnalysis(
