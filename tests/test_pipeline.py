@@ -184,6 +184,44 @@ class TestLearningRecords(PipelineTestCase):
         self.assertEqual(summary["tsumego_count"], 20)
         self.assertEqual(summary["tsumego_wrong"], 3)
 
+    def test_interactive_tsumego_counts_toward_daily_log(self):
+        """アプリ内蔵の詰碁（tsumego_logs）も学習記録に反映されること。
+
+        以前は手入力（tsumego_sessions）しか見ておらず、内蔵詰碁クイズを
+        どれだけ解いても daily_logs の詰碁数は 0 のままだった。
+        """
+        from go_review.learning import record_tsumego_problem, record_tsumego_answer
+
+        record_tsumego_problem(
+            self.db, source="内蔵", theme_tag="死活", tsumego_id="T-x",
+            position_sgf="(;GM[1]FF[4]SZ[9]AB[aa]PL[B])", player_to_move="B",
+            correct_moves=[{"coord": "B9", "label": "最善"}],
+        )
+        record_tsumego_answer(
+            self.db, "T-x", is_correct=True, settings=self.settings,
+            solved_at="2026-02-10T09:00:00+00:00",
+        )
+        summary = refresh_daily_log(self.db, "2026-02-10")
+        self.assertEqual(summary["tsumego_count"], 1)
+        self.assertEqual(summary["tsumego_wrong"], 0)
+
+    def test_tsumego_answer_credited_to_solved_date_not_batch_time(self):
+        from go_review.learning import record_tsumego_problem, record_tsumego_answer
+
+        record_tsumego_problem(
+            self.db, source="内蔵", theme_tag="死活", tsumego_id="T-y",
+            position_sgf="(;GM[1]FF[4]SZ[9]AB[aa]PL[B])", player_to_move="B",
+            correct_moves=[{"coord": "B9", "label": "最善"}],
+        )
+        record_tsumego_answer(
+            self.db, "T-y", is_correct=False, settings=self.settings,
+            solved_at="2026-02-01T23:00:00+00:00",
+        )
+        row = self.db.query_one("SELECT tsumego_wrong FROM daily_logs WHERE date = ?",
+                                 ("2026-02-01",))
+        self.assertIsNotNone(row)
+        self.assertEqual(row["tsumego_wrong"], 1)
+
     def test_cross_analysis_shape(self):
         record_tsumego_session(self.db, solved=10, wrong=1, themes=["切断された"])
         rows = cross_analysis(self.db)

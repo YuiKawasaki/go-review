@@ -238,6 +238,9 @@ export async function submitAnswer(problemId, coord, seconds, hintUsed, reason) 
     seconds,
     hint_used: Boolean(hintUsed),
     reason: reason || '',
+    // 実際に解いた日時。これが無いと、自宅PCのバッチが取り込んだ時刻
+    // （不定期）が代わりに記録され、学習記録の日付がずれてしまう。
+    answered_at: new Date().toISOString(),
   };
   await enqueue('answer', payload);
   const state = localState();
@@ -254,6 +257,8 @@ export async function submitTsumegoAnswer(tsumegoId, isCorrect, seconds, hintUse
     is_correct: Boolean(isCorrect),
     seconds,
     hint_used: Boolean(hintUsed),
+    // submitAnswer と同じ理由。
+    solved_at: new Date().toISOString(),
   };
   await enqueue('tsumego-answer', payload);
   return payload;

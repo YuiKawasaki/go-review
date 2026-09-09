@@ -94,6 +94,17 @@ def record_answer(
         (problem_id, streak, due, graduated, verdict),
     )
     db.commit()
+
+    # 学習記録（daily_logs）をこの回答の日付で即時更新する。writeback の
+    # push_daily_log 任せだと「バッチが動いた日」しか更新されず、バッチが
+    # 不定期に動くこのアプリでは、実際に解いた日と記録の日付がずれ続けて
+    # 「毎日やっているのに連続日数が 0」になっていた。record_tsumego_answer
+    # と同じ理由・同じ直し方。srs → learning の逆方向 import は循環になる
+    # ため、ここでだけ遅延 import する。
+    from .learning import refresh_daily_log
+
+    refresh_daily_log(db, reviewed_at[:10])
+
     return {
         "problem_id": problem_id,
         "verdict": verdict,

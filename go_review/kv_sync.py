@@ -107,6 +107,9 @@ def pull_answers(db: Database, settings: Settings, log: Logger = lambda _m: None
                     think_seconds=float(payload.get("seconds") or 0),
                     settings=settings,
                     hint_used=bool(payload.get("hint_used")),
+                    # 端末が実際に解いた日時。無い（古いキュー項目）場合は
+                    # record_answer 側で取り込み時刻にフォールバックする。
+                    reviewed_at=payload.get("answered_at"),
                 )
             elif kind == "tsumego":
                 record_tsumego_session(
@@ -125,6 +128,7 @@ def pull_answers(db: Database, settings: Settings, log: Logger = lambda _m: None
                     settings=settings,
                     seconds=float(payload.get("seconds") or 0),
                     hint_used=bool(payload.get("hint_used")),
+                    solved_at=payload.get("solved_at"),
                 )
             elif kind == "note":
                 set_note(db, payload["date"], payload.get("note", ""))

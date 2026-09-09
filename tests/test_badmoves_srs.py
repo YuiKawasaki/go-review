@@ -147,6 +147,27 @@ class TestReviewFlow(unittest.TestCase):
         self.assertEqual(len(due), 1)
         self.assertTrue(due[0]["first_time"])
 
+    def test_answer_is_credited_to_the_date_it_was_answered(self):
+        """バッチの取り込み時刻ではなく、実際に解いた日付で記録されること。
+
+        以前は reviewed_at を渡さず常に「今の時刻」で記録していたため、
+        バッチが不定期にしか動かないこのアプリでは、実際に勉強した日と
+        記録の日付がずれ続け、連続学習日数が正しく積み上がらなかった。
+        """
+        from go_review.learning import dashboard
+
+        past = "2026-01-05T10:00:00+00:00"
+        record_answer(self.db, "P-0001", "D4", 3.0, self.settings, reviewed_at=past)
+        row = self.db.query_one("SELECT problem_accuracy FROM daily_logs WHERE date = ?",
+                                 ("2026-01-05",))
+        self.assertIsNotNone(row, "解いた日付の daily_logs が即時に作られること")
+        self.assertEqual(row["problem_accuracy"], 100.0)
+
+        today_row = self.db.query_one(
+            "SELECT COUNT(*) n FROM daily_logs WHERE date = date('now')"
+        )
+        self.assertEqual(today_row["n"], 0, "バッチ実行時刻の日付には記録が付かないこと")
+
 
 class TestDueProblemsExtra(unittest.TestCase):
     """今日の優先分を終えても学習をやめさせない、という仕様の確認。

@@ -96,8 +96,16 @@ def record_tsumego_answer(
     settings: Settings,
     seconds: float = 0.0,
     hint_used: bool = False,
+    solved_at: Optional[str] = None,
 ) -> dict:
-    """詰碁の復習結果。正解を見てから解けた場合は正解として扱わない運用。"""
+    """詰碁の復習結果。正解を見てから解けた場合は正解として扱わない運用。
+
+    solved_at は端末が実際に解いた日時（ISO 8601）。PWA からは毎回
+    渡ってくる想定だが、古いキュー項目など無い場合は取り込み時刻に
+    フォールバックする。ここが無いと、バッチが取り込んだ時刻が
+    学習記録の日付になってしまい、バッチの実行が不定期な分だけ
+    「今日勉強したのに記録は昨日／数日前のまま」がずれ続ける。
+    """
     row = db.query_one("SELECT streak FROM tsumego WHERE id = ?", (tsumego_id,))
     if not row:
         raise KeyError(f"詰碁が見つかりません: {tsumego_id}")
@@ -105,7 +113,7 @@ def record_tsumego_answer(
     streak = (row["streak"] or 0) + 1 if (is_correct and not hint_used) else 0
     graduated = 1 if streak >= settings.tsumego_graduate_streak else 0
     due = None if graduated else next_due(max(streak, 1), settings)
-    solved_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    solved_at = solved_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     db.execute(
         "INSERT INTO tsumego_logs (tsumego_id, solved_at, is_correct, seconds, hint_used, "
@@ -117,7 +125,7 @@ def record_tsumego_answer(
         (streak, due, graduated, tsumego_id),
     )
     db.commit()
-    refresh_daily_log(db, _today_str())
+    refresh_daily_log(db, solved_at[:10])
     return {"tsumego_id": tsumego_id, "streak": streak, "graduated": bool(graduated), "next_due_at": due}
 
 
@@ -196,12 +204,24 @@ def refresh_daily_log(db: Database, on_date: Optional[str] = None) -> dict:
     games = db.scalar(
         "SELECT COUNT(*) FROM games WHERE substr(COALESCE(played_at,''),1,10) = ?", (on_date,)
     ) or 0
-    solved = db.scalar(
+
+    # 詰碁は2系統ある。tsumego_sessions は別アプリで解いた分の手入力、
+    # tsumego_logs はアプリ内蔵の詰碁クイズを解いた記録。以前はここが
+    # tsumego_sessions だけを見ていたため、内蔵詰碁をどれだけ解いても
+    # 学習記録には「詰碁 0 問」のまま反映されなかった。両方を合算する。
+    manual_solved = db.scalar(
         "SELECT COALESCE(SUM(solved),0) FROM tsumego_sessions WHERE date = ?", (on_date,)
     ) or 0
-    wrong = db.scalar(
+    manual_wrong = db.scalar(
         "SELECT COALESCE(SUM(wrong),0) FROM tsumego_sessions WHERE date = ?", (on_date,)
     ) or 0
+    interactive = db.query(
+        "SELECT is_correct FROM tsumego_logs WHERE substr(solved_at,1,10) = ?", (on_date,)
+    )
+    interactive_solved = sum(1 for r in interactive if r["is_correct"])
+    interactive_wrong = sum(1 for r in interactive if not r["is_correct"])
+    solved = manual_solved + interactive_solved
+    wrong = manual_wrong + interactive_wrong
 
     reviews = db.query(
         "SELECT is_correct, think_seconds FROM reviews WHERE substr(reviewed_at,1,10) = ?",
