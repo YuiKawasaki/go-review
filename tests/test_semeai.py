@@ -51,11 +51,16 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(s.black_outside, 0)
         self.assertEqual(s.white_outside, 0)
 
-    def test_gap_becomes_white_outside_dame(self):
+    def test_rejects_group_that_can_run_away(self):
+        """呼吸点が盤の広い空き地へつながっている形は弾く。
+
+        壁に穴を開けて「外ダメ」を作ったつもりの図。呼吸点の数だけ見れば
+        1 つだが、その先が盤全体につながっているので、その石は走って
+        逃げられる。攻め合いとして成立しない。
+        """
         s = check_shape(parse_diagram("gap", WHITE_HAS_OUTSIDE))
-        self.assertEqual(s.faults, [])
-        self.assertEqual(s.white_outside, 1)
-        self.assertEqual(s.shared, 3)
+        self.assertTrue(s.faults)
+        self.assertTrue(any("逃げ出せる" in f for f in s.faults))
 
     def test_rejects_racing_stones_touching_own_wall(self):
         """攻め合いの石が自分の壁とつながっていたら弾く。
@@ -104,6 +109,56 @@ class TestParsing(unittest.TestCase):
         self.assertIn("AB[", sgf)
         self.assertIn("AW[", sgf)
         self.assertIn("SZ[9]", sgf)
+
+
+EYELESS_13 = [
+    ".............",
+    ".WWWWWW......",
+    ".WbbbbW......",
+    ".Wb..bW......",
+    ".BwwwwB......",
+    ".BBBBBB......",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+]
+
+
+class TestLargerBoard(unittest.TestCase):
+    """9 路に収まらない形。盤の大きさは図の行数から決める。
+
+    攻め合いを「両者とも眼を作れない」形にするには、どちらの石も
+    単独では空間を囲わないようにする必要がある。9 路の入れ子では
+    外側の石が必ず内側に眼のスペースを持ってしまうため、場所を広げて
+    黒をアーチ、白を直線にし、間の 2 点だけを共有させている。
+    """
+
+    def test_reads_13x13(self):
+        s = check_shape(parse_diagram("eyeless", EYELESS_13))
+        self.assertEqual(s.size, 13)
+        self.assertEqual(s.faults, [])
+        self.assertEqual(s.shared, 2)
+        self.assertEqual(s.black_outside, 0)
+        self.assertEqual(s.white_outside, 0)
+
+    def test_sgf_declares_the_right_size(self):
+        s = check_shape(parse_diagram("eyeless", EYELESS_13))
+        self.assertIn("SZ[13]", to_sgf(s))
+
+    def test_neither_group_encloses_space(self):
+        """どちらの石も単独では空間を囲っていない（＝眼ができない）。
+
+        入れ子で作ると外側の石が内側に眼のスペースを持ってしまい、
+        資料 §3 が前提とする「両者に目もない攻め合い」にならない。
+        """
+        s = check_shape(parse_diagram("eyeless", EYELESS_13))
+        # 共有ダメは黒にも白にも接している＝どちらの眼にもならない
+        self.assertEqual(s.shared, 2)
+        self.assertEqual(s.black_outside + s.white_outside, 0)
 
 
 class TestPredict(unittest.TestCase):

@@ -49,7 +49,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-SIZE = 9
+# 盤の大きさは図の行数から決める。攻め合いは死活より場所を食う
+# （両者が眼を作れない形にするには、幅 1 の線を 2 本並べたうえで、
+# それぞれを相手の生きた壁で挟み、さらに盤全体の地合いも釣り合わせる
+# 必要がある）。9 路では収まらないので、図の大きさに合わせる。
+DEFAULT_SIZE = 9
+MAX_SIZE = 19
+
+# 攻め合いの石の呼吸点から空点をたどって、この数を超える範囲に
+# つながっていたら「逃げられる」とみなす。攻め合いのダメは普通
+# 数個に収まるので、それを大きく超えるなら囲えていない。
+ESCAPE_LIMIT = 8
 
 RACING_BLACK = "b"
 RACING_WHITE = "w"
@@ -66,6 +76,7 @@ class Shape:
     """盤面図から読み取った攻め合いの形。"""
     name: str
     diagram: list[str]
+    size: int = DEFAULT_SIZE
     black: list[tuple[int, int]] = field(default_factory=list)
     white: list[tuple[int, int]] = field(default_factory=list)
     racing_black: set[tuple[int, int]] = field(default_factory=set)
@@ -82,11 +93,11 @@ class Shape:
         return not self.faults
 
 
-def _neighbors(c: tuple[int, int]) -> list[tuple[int, int]]:
+def _neighbors(c: tuple[int, int], size: int) -> list[tuple[int, int]]:
     return [
         (c[0] + dc, c[1] + dr)
         for dc, dr in ((1, 0), (-1, 0), (0, 1), (0, -1))
-        if 0 <= c[0] + dc < SIZE and 0 <= c[1] + dr < SIZE
+        if 0 <= c[0] + dc < size and 0 <= c[1] + dr < size
     ]
 
 
@@ -96,14 +107,16 @@ def parse_diagram(name: str, diagram: list[str]) -> Shape:
     図は 9 行 × 9 文字。空白は読みやすさのために入れてよい（無視する）。
     """
     rows = [line.replace(" ", "") for line in diagram if line.strip()]
-    shape = Shape(name=name, diagram=list(rows))
-    if len(rows) != SIZE:
-        shape.faults.append(f"図が {len(rows)} 行です（{SIZE} 行必要）")
+    size = len(rows)
+    shape = Shape(name=name, diagram=list(rows), size=size)
+    if not (2 <= size <= MAX_SIZE):
+        shape.faults.append(f"図が {size} 行です（2〜{MAX_SIZE} 行にしてください）")
         return shape
 
     for r, line in enumerate(rows):
-        if len(line) != SIZE:
-            shape.faults.append(f"{r + 1} 行目が {len(line)} 文字です（{SIZE} 文字必要）")
+        if len(line) != size:
+            shape.faults.append(
+                f"{r + 1} 行目が {len(line)} 文字です（{size} 行の図なので {size} 文字必要）")
             return shape
         for c, ch in enumerate(line):
             point = (c, r)
@@ -122,7 +135,7 @@ def parse_diagram(name: str, diagram: list[str]) -> Shape:
     return shape
 
 
-def _group(board: dict, start: tuple[int, int]) -> tuple[set, set]:
+def _group(board: dict, start: tuple[int, int], size: int) -> tuple[set, set]:
     """start の石とつながる一団と、その呼吸点を返す。"""
     color = board.get(start)
     stones: set[tuple[int, int]] = set()
@@ -133,7 +146,7 @@ def _group(board: dict, start: tuple[int, int]) -> tuple[set, set]:
         if cur in stones:
             continue
         stones.add(cur)
-        for n in _neighbors(cur):
+        for n in _neighbors(cur, size):
             v = board.get(n)
             if v is None:
                 libs.add(n)
@@ -161,8 +174,8 @@ def check_shape(shape: Shape) -> Shape:
         shape.faults.append("攻め合う石（b と w）が両方必要です")
         return shape
 
-    b_stones, b_libs = _group(board, next(iter(shape.racing_black)))
-    w_stones, w_libs = _group(board, next(iter(shape.racing_white)))
+    b_stones, b_libs = _group(board, next(iter(shape.racing_black)), shape.size)
+    w_stones, w_libs = _group(board, next(iter(shape.racing_white)), shape.size)
 
     if b_stones != shape.racing_black:
         shape.faults.append("b の石が 1 つの連になっていません（または壁とつながっています）")
@@ -179,7 +192,7 @@ def check_shape(shape: Shape) -> Shape:
     if not (b_stones and w_stones):
         shape.faults.append("攻め合う石がありません")
     # 隣り合っていない＝攻め合いではない
-    adjacent = any(n in w_stones for s in b_stones for n in _neighbors(s))
+    adjacent = any(n in w_stones for s in b_stones for n in _neighbors(s, shape.size))
     if not adjacent and not shared:
         shape.faults.append("b と w が接してもダメも共有しておらず、攻め合いになっていません")
 
@@ -188,7 +201,7 @@ def check_shape(shape: Shape) -> Shape:
     for p, color in board.items():
         if p in checked or p in b_stones or p in w_stones:
             continue
-        stones, libs = _group(board, p)
+        stones, libs = _group(board, p, shape.size)
         checked |= stones
         if len(libs) < 2:
             shape.faults.append(
@@ -197,10 +210,26 @@ def check_shape(shape: Shape) -> Shape:
             )
             break
 
-    # 逃げ道が広すぎる形は攻め合いにならない（外ダメが多すぎる＝盤が空いている）
-    for label, outside in (("黒", shape.black_outside), ("白", shape.white_outside)):
-        if outside > 8:
-            shape.faults.append(f"{label}の外ダメが {outside} で多すぎます（囲えていない可能性）")
+    # 攻め合いの石が逃げ出せないか。
+    #
+    # 呼吸点の数だけ見ても足りない。呼吸点が 1 つでも、その先が盤の
+    # 広い空き地へつながっていれば、その石は走って逃げられるので
+    # 攻め合いにならない（実際にこれで 2 つの図を作り損なった）。
+    # 呼吸点から空点をたどって、閉じた範囲に収まっているかを見る。
+    for label, libs in (("黒", b_libs), ("白", w_libs)):
+        region: set[tuple[int, int]] = set()
+        stack = list(libs)
+        while stack:
+            cur = stack.pop()
+            if cur in region or board.get(cur) is not None:
+                continue
+            region.add(cur)
+            stack.extend(_neighbors(cur, shape.size))
+        if len(region) > ESCAPE_LIMIT:
+            shape.faults.append(
+                f"{label}の呼吸点が広い空き地（{len(region)}点）につながっています。"
+                "囲えておらず、逃げ出せるので攻め合いになりません"
+            )
             break
     return shape
 
@@ -275,7 +304,7 @@ def to_sgf(shape: Shape) -> str:
     def cell(c: tuple[int, int]) -> str:
         return f"[{chr(97 + c[0])}{chr(97 + c[1])}]"
 
-    parts = [f"(;GM[1]FF[4]SZ[{SIZE}]KM[7.0]"]
+    parts = [f"(;GM[1]FF[4]SZ[{shape.size}]KM[7.0]"]
     if shape.black:
         parts.append("AB" + "".join(cell(c) for c in sorted(shape.black)))
     if shape.white:
@@ -291,10 +320,11 @@ def render(shape: Shape) -> str:
         board[p] = "●" if p in shape.racing_black else "◍"
     for p in shape.white:
         board[p] = "○" if p in shape.racing_white else "◌"
-    lines = ["   " + " ".join("ABCDEFGHJ")]
-    for r in range(SIZE):
-        cells = " ".join(board.get((c, r), "・") for c in range(SIZE))
-        lines.append(f"{SIZE - r:2d} {cells}")
+    cols = "ABCDEFGHJKLMNOPQRST"[: shape.size]
+    lines = ["   " + " ".join(cols)]
+    for r in range(shape.size):
+        cells = " ".join(board.get((c, r), "・") for c in range(shape.size))
+        lines.append(f"{shape.size - r:2d} {cells}")
     return "\n".join(lines)
 
 
@@ -313,13 +343,15 @@ OUTCOME_LABELS = {
 }
 
 
-def _avg_ownership(ownership: list[float], stones: set[tuple[int, int]]) -> float:
+def _avg_ownership(
+    ownership: list[float], stones: set[tuple[int, int]], size: int
+) -> float:
     if not stones:
         return 0.0
     total = sum(
-        ownership[s[1] * SIZE + s[0]]
+        ownership[s[1] * size + s[0]]
         for s in stones
-        if 0 <= s[1] * SIZE + s[0] < len(ownership)
+        if 0 <= s[1] * size + s[0] < len(ownership)
     )
     return total / len(stones)
 
@@ -346,7 +378,7 @@ def judge_with_engine(
     """
     from .sgf import Game
 
-    game = Game(size=SIZE, komi=7.0, rules="Chinese")
+    game = Game(size=shape.size, komi=7.0, rules="Chinese")
     game.setup_black = list(shape.black)
     game.setup_white = list(shape.white)
     # PL は SGF 側で持てないので、手番は解析の呼び出しで表現する。
@@ -354,8 +386,8 @@ def judge_with_engine(
     if not analysis.ownership:
         return None
 
-    b_own = _avg_ownership(analysis.ownership, shape.racing_black)
-    w_own = _avg_ownership(analysis.ownership, shape.racing_white)
+    b_own = _avg_ownership(analysis.ownership, shape.racing_black, shape.size)
+    w_own = _avg_ownership(analysis.ownership, shape.racing_white, shape.size)
 
     black_lives = b_own > OWNED
     white_lives = w_own < -OWNED
