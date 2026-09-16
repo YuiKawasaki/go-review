@@ -57,6 +57,7 @@ def record_tsumego_problem(
     correct_moves: Optional[list[dict]] = None,
     difficulty: Optional[int] = None,
     hints: Optional[list[str]] = None,
+    question: Optional[dict] = None,
 ) -> str:
     """詰碁を1問登録する。
 
@@ -65,6 +66,8 @@ def record_tsumego_problem(
     - アプリ内蔵（このアプリ自身で出題・KataGoで検証済み）:
       position_sgf/player_to_move/correct_moves も渡す
       まだ一度も解いていないので、次回出題日を持たせず当日から出題する。
+    - 攻め合いの手数計算・セキ判定: question も渡す。盤を押す代わりに
+      選択肢や数値で答える。復習の仕組みは盤の問題とまったく同じものを使う。
     """
     tsumego_id = tsumego_id or f"T-{uuid.uuid4().hex[:8]}"
     interactive = bool(position_sgf)
@@ -75,7 +78,7 @@ def record_tsumego_problem(
     db.execute(
         "INSERT OR REPLACE INTO tsumego (id, source, theme_tag, image_path, answer_note, "
         "streak, next_due_at, graduated, size, position_sgf, player_to_move, correct_moves, "
-        "difficulty, hints) VALUES (?,?,?,?,?,0,?,0,?,?,?,?,?,?)",
+        "difficulty, hints, question) VALUES (?,?,?,?,?,0,?,0,?,?,?,?,?,?,?)",
         (
             tsumego_id, source, theme_tag, image_path, answer_note,
             next_due_at,
@@ -83,6 +86,7 @@ def record_tsumego_problem(
             dumps(correct_moves) if correct_moves is not None else None,
             difficulty,
             dumps(hints) if hints is not None else None,
+            dumps(question) if question is not None else None,
         ),
     )
     db.commit()
@@ -189,6 +193,9 @@ def due_tsumego(
             "interactive": bool(r["position_sgf"]),
             "first_time": r["next_due_at"] is None,
             "refutations": load_refutations(db, r["id"]),
+            # 盤を押す代わりに選択肢・数値で答える問題（攻め合いなど）。
+            # 無い問題では None のままで、従来どおり盤上の着手で答える。
+            "question": loads(r["question"], None) if r["question"] else None,
         }
 
     return [payload(r) for r in primary] + [payload(r) for r in extra]

@@ -800,8 +800,13 @@ async function viewTsumegoQuiz() {
     let hintLevel = 0;
     let answered = false;
 
+    const question = problem.question || null;
+
     const canvas = el('canvas', { class: 'board' });
-    const tapHint = el('p', { class: 'muted small' }, '交点を2回タップで確定します。');
+    const tapHint = el('p', { class: 'muted small' }, question
+      ? '盤を見て、下から答えを選んでください。'
+      : '交点を2回タップで確定します。');
+    const questionBox = el('div', { class: 'question' });
     const hintRow = el('div', { class: 'row' }, [
       el('button', {
         disabled: (problem.hints || []).length ? null : 'disabled',
@@ -814,7 +819,11 @@ async function viewTsumegoQuiz() {
     const seqTop = el('div', { class: 'seq-top' });
     const resultBox = el('div', { class: 'result' });
 
-    const view = new BoardView(canvas, { size, onPlay: (coord) => submit(coord) });
+    const view = new BoardView(canvas, {
+      size,
+      onPlay: (coord) => { if (!question) submit(coord); },
+    });
+    if (question) view.interactive = false;
 
     function submit(coord) {
       if (answered) return;
@@ -828,6 +837,58 @@ async function viewTsumegoQuiz() {
 
       store.submitTsumegoAnswer(problem.tsumego_id, isCorrect, seconds, hintLevel > 0);
       showResult(coord, isCorrect, hit);
+    }
+
+    // 盤を押す代わりに、選択肢や数値で答える問題（攻め合いの手数計算・
+    // セキ判定）。急所を1点で答えられない概念はこの形でしか出せない。
+    // 復習の記録は盤の問題とまったく同じ経路を使う。
+    function submitQuestion(value) {
+      if (answered) return;
+      answered = true;
+      const seconds = (performance.now() - startedAt) / 1000;
+      const isCorrect = String(value) === String(question.answer);
+      store.submitTsumegoAnswer(problem.tsumego_id, isCorrect, seconds, hintLevel > 0);
+      showQuestionResult(value, isCorrect);
+    }
+
+    function showQuestionResult(value, isCorrect) {
+      questionBox.hidden = true;
+      tapHint.hidden = true;
+      hintRow.hidden = true;
+      hintBox.hidden = true;
+
+      const answerLabel = question.kind === 'choice'
+        ? (question.choices || [])[question.answer]
+        : `${question.answer}`;
+      const yourLabel = question.kind === 'choice'
+        ? (question.choices || [])[value]
+        : `${value}`;
+
+      fill(
+        seqTop,
+        el('div', { class: `verdict verdict-${isCorrect ? 'ok' : 'wrong'}` },
+          isCorrect ? '正解' : '不正解'),
+        el('p', {}, `あなたの答え: ${yourLabel} ／ 正解: ${answerLabel}`),
+      );
+      fill(
+        resultBox,
+        el('h3', { class: 'seq-title' }, '解説'),
+        renderExplanation(question.explain || problem.answer_note || ''),
+        problem.theme_tag
+          ? el('div', { class: 'row' }, [el('span', { class: 'tag' }, problem.theme_tag)]) : null,
+        el('p', { class: 'muted small' }, isCorrect
+          ? '次に出るのは少し先になります。'
+          : '間違えた問題は明日もう一度出ます。'),
+        el('div', { class: 'row' }, [
+          el('button', {
+            class: 'primary',
+            onclick: () => { position += 1; renderTsumego(); },
+          }, '理解した'),
+          el('button', {
+            onclick: () => { position += 1; renderTsumego(); },
+          }, '次へ'),
+        ]),
+      );
     }
 
     function showResult(coord, isCorrect, hit) {
@@ -877,6 +938,30 @@ async function viewTsumegoQuiz() {
       hintLevel += 1;
     }
 
+    function buildQuestionUi() {
+      if (!question) return;
+      if (question.kind === 'number') {
+        const input = el('input', { type: 'number', inputmode: 'numeric', class: 'small' });
+        questionBox.replaceChildren(
+          el('div', { class: 'row' }, [
+            input,
+            el('button', {
+              class: 'primary',
+              onclick: () => {
+                if (input.value === '') return;
+                submitQuestion(Number(input.value));
+              },
+            }, '答える'),
+          ]),
+        );
+        return;
+      }
+      questionBox.replaceChildren(
+        el('div', { class: 'row choices' }, (question.choices || []).map((label, i) =>
+          el('button', { onclick: () => submitQuestion(i) }, label))),
+      );
+    }
+
     app.replaceChildren(
       el('div', { class: 'quiz-header' }, [
         el('span', {}, `${position + 1} / ${queue.length}`),
@@ -884,16 +969,20 @@ async function viewTsumegoQuiz() {
         el('span', { class: 'muted' }, ` ${problem.player_to_move === 'W' ? '白番' : '黒番'}`),
         problem.first_time ? null : el('span', { class: 'badge' }, '復習'),
       ]),
-      el('p', { class: 'prompt' }, problem.theme_tag
-        ? `${problem.theme_tag}の問題です。最善の一手はどこか。`
-        : 'この局面での最善の一手はどこか。'),
+      el('p', { class: 'prompt' }, question
+        ? (question.prompt || 'この攻め合いはどうなりますか。')
+        : (problem.theme_tag
+          ? `${problem.theme_tag}の問題です。最善の一手はどこか。`
+          : 'この局面での最善の一手はどこか。')),
       canvas,
       seqTop,
       tapHint,
+      questionBox,
       hintRow,
       hintBox,
       resultBox,
     );
+    buildQuestionUi();
     view.setState(state, { numbers: state.numbers });
   }
 }

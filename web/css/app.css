@@ -229,6 +229,12 @@ input.small { max-width: 100px; }
 
 /* ------------------------------------------------ 手順プレイヤー・用語 */
 
+.question { margin: 8px 0; }
+/* 選択肢は指で押しやすい大きさにする。3択が横に並びきらない幅でも
+   折り返して潰れないよう、最低幅だけ決めて伸ばす。 */
+.choices { flex-wrap: wrap; gap: 8px; }
+.choices button { flex: 1 1 auto; min-width: 96px; padding: 12px 14px; font-size: 15px; }
+
 .seq-top { margin: 6px 0 4px; }
 .seq-title { font-size: 15px; margin: 16px 0 6px; }
 .sequence { margin: 2px 0 4px; }

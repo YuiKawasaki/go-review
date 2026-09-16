@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS tsumego (
     correct_moves  TEXT,
     difficulty     INTEGER,
     hints          TEXT,
+    question       TEXT,
     created_at     TEXT DEFAULT (datetime('now'))
 );
 
@@ -227,6 +228,9 @@ class Database:
             "correct_moves": "TEXT",
             "difficulty": "INTEGER",
             "hints": "TEXT",
+            # 盤を押す代わりに選択肢・数値で答える問題（攻め合いの手数計算・
+            # セキ判定）。JSON で持つ。空なら従来どおり盤上の着手で答える。
+            "question": "TEXT",
         }
         for column, decl in additions.items():
             if column not in existing:
