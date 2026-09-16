@@ -334,7 +334,6 @@ def render(shape: Shape) -> str:
 # 所有権がどちらに振れるかで読める。セキは「どちらのものでもない」ので
 # 0 付近にとどまる。tagging.py の生死判定と同じしきい値を使う。
 OWNED = 0.30
-SEKI_BAND = 0.30
 
 OUTCOME_LABELS = {
     "black": "黒が勝つ（白が取られる）",
@@ -398,13 +397,16 @@ def judge_with_engine(
         outcome = "white"
     elif white_dead and not black_dead:
         outcome = "black"
-    elif abs(b_own) < SEKI_BAND and abs(w_own) < SEKI_BAND:
-        outcome = "seki"
     elif black_lives and white_lives:
-        # 双方が自分のものとして評価されている＝取り合いが起きていない。
-        # 攻め合いとして成立していないので採用しない。
-        return None
+        # 双方の石が自分のものとして残っている＝どちらも取られていない。
+        # これがセキ。
+        #
+        # 最初はセキを「どちらの所有でもない（0 付近）」と判定していたが、
+        # それは石ではなくダメの話だった。セキでは両方の石が生き残るので、
+        # 黒石は黒のもの・白石は白のものとして評価される。
+        outcome = "seki"
     else:
+        # どちらつかず。攻め合いが決着していない局面なので採用しない。
         return None
 
     return {
