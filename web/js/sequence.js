@@ -105,14 +105,19 @@ export function createSequencePlayer({ view, size, startState, firstColor, seque
       : [el('span', { class: 'seq-single' }, current.label)]));
 
     const total = current.pv.length;
+    // replaceChildren は非 Node の引数を String() で文字列化するため、
+    // 条件が false のとき null をそのまま渡すと「null」という文字が
+    // 表示されてしまう。渡す前に filter で取り除く。
     controls.replaceChildren(
-      el('button', { disabled: step <= 0 ? 'disabled' : null, onclick: () => go(-1) }, '◀'),
-      el('span', { class: 'seq-count' }, step === 0 ? `問題の局面` : `${step} / ${total} 手`),
-      el('button', { disabled: step >= total ? 'disabled' : null, onclick: () => go(1) }, '▶'),
-      el('button', { class: 'link', onclick: () => { step = 0; touched = true; draw(); } }, '最初から'),
-      step < total
-        ? el('button', { class: 'link', onclick: () => { step = total; touched = true; draw(); } }, '最後まで')
-        : null,
+      ...[
+        el('button', { disabled: step <= 0 ? 'disabled' : null, onclick: () => go(-1) }, '◀'),
+        el('span', { class: 'seq-count' }, step === 0 ? `問題の局面` : `${step} / ${total} 手`),
+        el('button', { disabled: step >= total ? 'disabled' : null, onclick: () => go(1) }, '▶'),
+        el('button', { class: 'link', onclick: () => { step = 0; touched = true; draw(); } }, '最初から'),
+        step < total
+          ? el('button', { class: 'link', onclick: () => { step = total; touched = true; draw(); } }, '最後まで')
+          : null,
+      ].filter(Boolean),
     );
 
     const comment = step > 0 ? (current.comments || [])[step - 1] || '' : '';

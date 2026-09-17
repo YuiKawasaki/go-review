@@ -49,6 +49,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .refutations import KIND_BEST, KIND_CANDIDATE
+
 # 盤の大きさは図の行数から決める。攻め合いは死活より場所を食う
 # （両者が眼を作れない形にするには、幅 1 の線を 2 本並べたうえで、
 # それぞれを相手の生きた壁で挟み、さらに盤全体の地合いも釣り合わせる
@@ -601,3 +603,160 @@ def import_verified(db, verified: list[dict]) -> int:
             )
     db.commit()
     return len(verified)
+
+
+# --------------------------------------------------- 手順プレイヤー形式（外ダメ優先）
+
+# 「盤を見てどこに打つか」を問う形式。choice/number 形式と違い KataGo の
+# 探索（どこを深く読むか）に頼るため、盤に空き地が残っていると KataGo は
+# 「もう勝敗は決まっている」と判断して局所を真剣に読まない
+# （tsumego_seed.py が過去に3回つまずいたのと同じ症状。実際にまずこの
+# 症状で失敗し、盤の大きさを図の中身ちょうど＝7路まで削ってようやく
+# 直った。9路・14路では最善手の候補が盤の隅の空き地に散ってしまい、
+# 7路にしたところ候補手のほぼ全て（99%）が攻め合いの急所に集中した）。
+#
+# 検証で分かったこと（このモジュールの docstring で触れた「黒の外ダメが
+# 白の壁色で囲われている」という設計そのものが、実は弱点ではなく教材と
+# して機能する）:
+#
+#   黒番でこの局面を解析すると、白の外ダメ（D2）・共有ダメ（D4/E4）は
+#   どれもほぼ同じ好評価（勝率 99%前後・地合い +40 前後）で並んだ。
+#   一方、黒自身の外ダメ（D6/E6）に打った直後を個別に解析すると、
+#   勝率が 99%→1% 前後、地合いが +40→-55 前後へ暴落した。
+#
+#   理由: 黒の外ダメの区画は白の壁石で囲ってあるため、そこを打っても
+#   白の呼吸点は一切減らない。しかも空点を1つ占める＝自分の呼吸点を
+#   1つ失うだけなので、二重に損をする。「外ダメは相手のものを先に、
+#   自分のものは自分から埋めない」という原則どおりの結果に、KataGo の
+#   評価が一致した。
+SEQUENCE_PROBLEMS: list[dict] = [
+    {
+        "id": "T-semeai-outside-dame-priority",
+        "theme": "攻め合い",
+        "difficulty": 14,
+        "size": 7,
+        "position_sgf": (
+            "(;GM[1]FF[4]SZ[7]KM[7.0]"
+            "AB[be][bf][bg][cc][cd][cf][cg][dc][dg][ec][ef][eg][fc][fd][ff][fg][ge][gf][gg]"
+            "AW[ba][bb][bc][bd][ca][cb][ce][da][de][ea][ee][fa][fb][fe][ga][gb][gc][gd]"
+            "PL[B])"
+        ),
+        "player_to_move": BLACK,
+        "hints": [
+            "黒と白、それぞれの外ダメ（相手と共有していない呼吸点）はいくつありますか。",
+            "外ダメは相手のものを先に詰めます。自分の外ダメを自分から埋めるのは、"
+            "相手の呼吸点を減らさないうえに自分の呼吸点まで減らす、二重に損な手です。",
+        ],
+        "correct_moves": [
+            {
+                "coord": "D2",
+                "label": "最善",
+                "note": (
+                    "白の外ダメ（共有していない、白だけの呼吸点）をこれで消しました。"
+                    "白はもう共有ダメを詰め合うしかなく、外ダメを使い切った白から先に"
+                    "呼吸点が尽きます。"
+                ),
+            },
+            {
+                "coord": "D4",
+                "label": "最善",
+                "note": (
+                    "共有ダメを直接詰めても、黒にはまだ外ダメが残っているので先着できます。"
+                    "今回のように外ダメの差が大きい時は、どちらから詰めても大差ありません。"
+                ),
+            },
+            {
+                "coord": "E4",
+                "label": "最善",
+                "note": "共有ダメのもう一方から詰めても同様に黒が先着します。",
+            },
+        ],
+        "refutations": [
+            {
+                "move": "D2", "kind": KIND_BEST,
+                "pv": ["D2", "A1", "D4", "A2", "E4", "A4", "A6", "pass"],
+                "winrate": 98.87, "score": 40.65, "visits": 474,
+            },
+            {
+                "move": "D4", "kind": KIND_CANDIDATE,
+                "pv": ["D4", "pass", "D2", "pass", "A4", "pass"],
+                "winrate": 99.38, "score": 40.66, "visits": 512,
+            },
+            {
+                "move": "E4", "kind": KIND_CANDIDATE,
+                "pv": ["E4", "A1", "A2", "A3", "A4", "E6", "D2"],
+                "winrate": 99.31, "score": 40.63, "visits": 509,
+            },
+            {
+                # 黒自身の外ダメ。相手の呼吸点を減らさないまま自分の呼吸点だけ
+                # 失う悪手で、勝率が 99%→1% へ暴落する（本文の docstring 参照）。
+                "move": "D6", "kind": KIND_CANDIDATE,
+                "pv": ["D6", "E6", "D2", "A2", "pass", "A1", "A3", "A2", "A4"],
+                "winrate": 1.13, "score": -55.47, "visits": None,
+            },
+            {
+                "move": "E6", "kind": KIND_CANDIDATE,
+                "pv": ["E6", "D6", "D2", "A4", "A3", "pass", "A5", "A2"],
+                "winrate": 1.03, "score": -55.66, "visits": None,
+            },
+        ],
+    },
+]
+
+
+def import_sequence_problems(db, items: Optional[list[dict]] = None) -> int:
+    """手順プレイヤー形式の攻め合い問題を DB へ登録する。
+
+    choice/number 形式（import_verified）と違い、正解は KataGo の
+    候補手選択そのもの。SEQUENCE_PROBLEMS の refutations は実際に
+    KataGo を解析して得た手・読み筋・評価値をそのまま持たせている
+    （このファイルの再実行では作り直さない。盤面を変えたときは
+    scratchpad で再検証してから書き直すこと）。
+    """
+    from .learning import record_tsumego_problem
+    from .refutations import save_refutation
+    from .sgf import parse_game
+    from .variations import BRANCH_BEST, BRANCH_PUNISH, pv_comments
+
+    items = items if items is not None else SEQUENCE_PROBLEMS
+    for item in items:
+        existing = db.query_one(
+            "SELECT id, streak, next_due_at, graduated FROM tsumego WHERE position_sgf = ?",
+            (item["position_sgf"],),
+        )
+        tsumego_id = existing["id"] if existing else item["id"]
+        game = parse_game(item["position_sgf"])
+
+        db.execute("DELETE FROM refutations WHERE problem_id = ?", (tsumego_id,))
+        for r in item["refutations"]:
+            branch = BRANCH_BEST if r["kind"] == KIND_BEST else BRANCH_PUNISH
+            comments = pv_comments(game, 0, r["pv"], item["player_to_move"], branch)
+            save_refutation(
+                db, tsumego_id, r["move"], r["kind"], r["pv"], comments,
+                r.get("winrate"), r.get("score"), r.get("visits"),
+            )
+
+        record_tsumego_problem(
+            db,
+            source="内蔵（攻め合い・外ダメ優先・KataGo検証済み）",
+            theme_tag=item["theme"],
+            answer_note=(
+                "外ダメ（相手の呼吸点のうち、自分と共有していないもの）を先に"
+                "詰めるのが攻め合いの鉄則です。自分の外ダメを自分で埋めても"
+                "相手の呼吸点は減らず、自分の呼吸点だけ1つ減ります。"
+            ),
+            tsumego_id=tsumego_id,
+            size=item["size"],
+            position_sgf=item["position_sgf"],
+            player_to_move=item["player_to_move"],
+            correct_moves=item["correct_moves"],
+            difficulty=item["difficulty"],
+            hints=item["hints"],
+        )
+        if existing:
+            db.execute(
+                "UPDATE tsumego SET streak = ?, next_due_at = ?, graduated = ? WHERE id = ?",
+                (existing["streak"], existing["next_due_at"], existing["graduated"], tsumego_id),
+            )
+    db.commit()
+    return len(items)

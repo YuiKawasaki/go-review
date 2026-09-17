@@ -3,7 +3,7 @@
 
 // キャッシュ名を変えると、activate で古いキャッシュが捨てられる。
 // アプリの取得方法を変えたときは必ず上げること。
-const CACHE = 'go-review-v5';
+const CACHE = 'go-review-v6';
 const SHELL = [
   './',
   './index.html',

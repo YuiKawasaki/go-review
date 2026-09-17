@@ -10,6 +10,7 @@ KataGo を使う判定（judge_with_engine）はここでは試さない。エ�
 import unittest
 
 from go_review.semeai import (
+    SEQUENCE_PROBLEMS,
     SHAPES,
     BLACK,
     build_question,
@@ -18,6 +19,7 @@ from go_review.semeai import (
     predict,
     to_sgf,
 )
+from go_review.sgf import parse_game
 
 # 入れ子の攻め合い: 外側の黒（生き）→ 白の輪 → 中の黒
 NESTED_SEKI = [
@@ -261,6 +263,48 @@ class TestBuildQuestion(unittest.TestCase):
         fake_judged = {"outcome": "black", "black_ownership": 0.9, "white_ownership": 0.8}
         q = build_question(shape, fake_judged, BLACK)
         self.assertEqual(q["choices"][q["answer"]], "黒が勝つ（白が取られる）")
+
+
+class TestSequenceProblems(unittest.TestCase):
+    """外ダメ優先の手順プレイヤー形式（盤を押して答える通常の詰碁と同じ経路）。
+
+    ここでは形式（pv[0]がmove自身、正解手の重複がない等）だけを見る。
+    実際に外ダメを埋める手が勝ち、自分の外ダメを埋める手が負けになる、
+    という中身そのものは scratchpad で KataGo を使って検証済み
+    （semeai.py の SEQUENCE_PROBLEMS 直前のコメント参照）。
+    """
+
+    def test_not_empty(self):
+        self.assertTrue(SEQUENCE_PROBLEMS)
+
+    def test_position_sgf_parses(self):
+        for item in SEQUENCE_PROBLEMS:
+            game = parse_game(item["position_sgf"])
+            self.assertEqual(game.size, item["size"])
+
+    def test_pv_starts_with_its_own_move(self):
+        for item in SEQUENCE_PROBLEMS:
+            for r in item["refutations"]:
+                self.assertEqual(r["pv"][0].upper(), r["move"].upper())
+
+    def test_correct_moves_are_unique(self):
+        for item in SEQUENCE_PROBLEMS:
+            coords = [m["coord"].upper() for m in item["correct_moves"]]
+            self.assertEqual(len(coords), len(set(coords)))
+
+    def test_wrong_moves_are_not_marked_correct(self):
+        """自分の外ダメ（D6/E6）は正解一覧に入っていないこと。"""
+        for item in SEQUENCE_PROBLEMS:
+            correct = {m["coord"].upper() for m in item["correct_moves"]}
+            wrong_refs = [
+                r for r in item["refutations"]
+                if r["move"].upper() not in correct
+            ]
+            self.assertTrue(wrong_refs)
+            for r in wrong_refs:
+                # 検証済み: 自分の外ダメを埋めると評価が暴落する
+                # （scratchpad: 勝率99%→1%、地合い+40→-55）。
+                self.assertLess(r["winrate"], 50)
 
 
 if __name__ == "__main__":

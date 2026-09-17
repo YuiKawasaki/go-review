@@ -291,6 +291,20 @@ def cmd_seed_semeai(settings: Settings, log: Log, args) -> int:
     return 0
 
 
+def cmd_seed_semeai_sequence(settings: Settings, log: Log, args) -> int:
+    """外ダメ優先の手順プレイヤー形式（攻め合い）を登録する。
+
+    choice/number 形式と違い、KataGo は使わない（SEQUENCE_PROBLEMS に
+    検証済みの手・読み筋・評価値を持たせてあるため）。
+    """
+    from .semeai import import_sequence_problems
+
+    with Database(settings.db_path) as db:
+        count = import_sequence_problems(db)
+    log(f"攻め合い（手順プレイヤー形式）を登録しました: {count} 問")
+    return 0
+
+
 def cmd_build_refutations(settings: Settings, log: Log, args) -> int:
     """既存の解析結果から「その手を打つとどうなるか」の手順を組み立てる。
 
@@ -522,6 +536,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_seedsm.add_argument("--only", default="", help="検証する形の名前をカンマ区切りで指定")
     p_seedsm.add_argument("--dry-run", action="store_true", help="検証だけ行い登録しない")
     p_seedsm.set_defaults(func=cmd_seed_semeai)
+
+    p_seedseq = sub.add_parser("seed-semeai-sequence", help="外ダメ優先の手順プレイヤー形式を登録")
+    p_seedseq.set_defaults(func=cmd_seed_semeai_sequence)
 
     p_rf = sub.add_parser("build-refutations", help="既存の解析結果から手順を組み立てる")
     p_rf.add_argument("--game", help="この対局だけを対象にする（省略時は全局）")
