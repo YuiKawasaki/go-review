@@ -416,3 +416,188 @@ def judge_with_engine(
         "winrate_black": round(analysis.winrate_black, 1),
         "score_lead_black": round(analysis.score_lead_black, 2),
     }
+
+
+# --------------------------------------------------------------- 問題の登録
+
+# 検証済みの配石。眼のできない通路型（本モジュールの docstring に書いた
+# 注意点どおり）を土台にして、外ダメの差だけを変えた3パターン。
+#
+#   seki       : 外ダメ 黒0・白0、共有2 → 内ダメ2で外ダメ同数はセキ
+#   black-wins : 外ダメ 黒2・白0、共有2 → 白の手数が足りず黒の勝ち
+#   white-wins : 外ダメ 黒0・白2、共有2 → 黒の手数が足りず白の勝ち（左右反転ではなく上下反転）
+#
+# いずれも KataGo の ownership 判定が predict() の予測と一致することを
+# 確認済み（scratchpad の検証ログ参照）。
+_EYELESS_13_SEKI = [
+    ".............",
+    ".WWWWWW......",
+    ".WbbbbW......",
+    ".Wb..bW......",
+    ".BwwwwB......",
+    ".BBBBBB......",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+]
+
+_EYELESS_13_BLACK_WINS = [
+    ".WWWWWW......",
+    ".WW..WW......",
+    ".WbbbbW......",
+    ".Wb..bW......",
+    ".BwwwwB......",
+    ".BBBBBB......",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+    ".............",
+]
+
+_EYELESS_14_WHITE_WINS = [
+    ".WWWWWW.......",
+    ".WWWWWW.......",
+    ".WbbbbW.......",
+    ".Wb..bW.......",
+    ".BwwwwB.......",
+    ".BB..BB.......",
+    ".BBBBBB.......",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+]
+
+# name, diagram, to_play
+SHAPES: list[tuple[str, list[str], str]] = [
+    ("semeai-eyeless-13-seki", _EYELESS_13_SEKI, BLACK),
+    ("semeai-eyeless-13-black-wins", _EYELESS_13_BLACK_WINS, BLACK),
+    ("semeai-eyeless-14-white-wins", _EYELESS_14_WHITE_WINS, BLACK),
+]
+
+_OUTCOMES = ["black", "white", "seki"]
+
+
+def build_question(shape: Shape, judged: dict, to_play: str = BLACK) -> dict:
+    """KataGo の判定から、選択式の問題文を組み立てる。
+
+    盤を押す代わりに3択（黒の勝ち／白の勝ち／セキ）で答える。正解は
+    judged["outcome"]（KataGo の ownership 判定）そのものであって、
+    predict() の予測ではない — 人が決めた規則ではなくエンジンの判定を
+    正解にする、というこのアプリ全体の原則をここでも保つ。
+    """
+    choices = [OUTCOME_LABELS[o] for o in _OUTCOMES]
+    answer = _OUTCOMES.index(judged["outcome"])
+    turn = "黒番" if to_play == BLACK else "白番"
+    prompt = (
+        f"{turn}。黒石{len(shape.racing_black)}子・白石{len(shape.racing_white)}子の攻め合いです。"
+        f"どうなりますか。\n"
+        f"外ダメ: 黒{shape.black_outside}・白{shape.white_outside}　共有ダメ: {shape.shared}"
+    )
+    if judged["outcome"] == "seki":
+        why = "外ダメの少ない方の手数（外ダメ＋内ダメ−1）が、外ダメの多い方の手数を上回るのでセキになります。"
+    else:
+        why = "外ダメの少ない方は手数が足りず、詰めに行く前に自分が取られます。"
+    explain = (
+        f"{OUTCOME_LABELS[judged['outcome']]}。{why}"
+        f"（KataGoの読み: 黒石の所有率{judged['black_ownership']:+.2f}・"
+        f"白石の所有率{judged['white_ownership']:+.2f}）"
+    )
+    return {"kind": "choice", "prompt": prompt, "choices": choices, "answer": answer, "explain": explain}
+
+
+def verify_shapes(
+    settings,
+    log,
+    visits: int = 1500,
+    only: Optional[list[str]] = None,
+) -> list[dict]:
+    """SHAPES を KataGo にかけ、predict() の予測と一致したものだけ返す。
+
+    tsumego_seed.verify_candidates と同じ考え方: 予測と判定が食い違う形は
+    碁として成立していない疑いがあるので、問題として採用しない。
+    """
+    from .katago import get_engine
+
+    engine = get_engine(settings, allow_stub=False)
+    verified: list[dict] = []
+    try:
+        for name, diagram, to_play in SHAPES:
+            if only and name not in only:
+                continue
+            shape = check_shape(parse_diagram(name, diagram))
+            if shape.faults:
+                log(f"NG {name}: 自己検査で不良（{'; '.join(shape.faults)}）")
+                continue
+            pred = predict(shape, to_play)
+            judged = judge_with_engine(engine, shape, to_play, visits=visits)
+            if judged is None:
+                log(f"NG {name}: KataGoの判定が決着しませんでした（攻め合いが終わっていない局面）")
+                continue
+            if judged["outcome"] != pred["outcome"]:
+                log(
+                    f"NG {name}: 予測（{pred['outcome']}）とKataGoの判定"
+                    f"（{judged['outcome']}）が食い違います"
+                )
+                continue
+            log(
+                f"OK {name}: {OUTCOME_LABELS[judged['outcome']]}"
+                f"（黒所有{judged['black_ownership']:+.2f}・白所有{judged['white_ownership']:+.2f}"
+                f"・勝率黒{judged['winrate_black']:.1f}%）"
+            )
+            verified.append({
+                "id": f"T-{name}",
+                "theme": "semeai",
+                "difficulty": 12,
+                "size": shape.size,
+                "position_sgf": to_sgf(shape),
+                "player_to_move": to_play,
+                "question": build_question(shape, judged, to_play),
+            })
+    finally:
+        engine.close()
+    return verified
+
+
+def import_verified(db, verified: list[dict]) -> int:
+    """検証済みの攻め合い問題を DB へ登録する。
+
+    tsumego_seed.import_verified と同じ理由で、id ではなく配石
+    （position_sgf）で照合する。同じ形が既にあれば streak を引き継ぐ。
+    """
+    from .learning import record_tsumego_problem
+
+    for item in verified:
+        existing = db.query_one(
+            "SELECT id, streak, next_due_at, graduated FROM tsumego WHERE position_sgf = ?",
+            (item["position_sgf"],),
+        )
+        tsumego_id = existing["id"] if existing else item["id"]
+        record_tsumego_problem(
+            db,
+            source="内蔵（攻め合い・KataGo検証済み）",
+            theme_tag=item["theme"],
+            tsumego_id=tsumego_id,
+            size=item["size"],
+            position_sgf=item["position_sgf"],
+            player_to_move=item["player_to_move"],
+            difficulty=item["difficulty"],
+            question=item["question"],
+        )
+        if existing:
+            db.execute(
+                "UPDATE tsumego SET streak = ?, next_due_at = ?, graduated = ? WHERE id = ?",
+                (existing["streak"], existing["next_due_at"], existing["graduated"], tsumego_id),
+            )
+    db.commit()
+    return len(verified)

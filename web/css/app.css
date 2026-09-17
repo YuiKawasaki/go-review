@@ -216,7 +216,7 @@ input.small { max-width: 100px; }
 /* ---------------------------------------------------------- 演習 */
 
 .quiz-header { display: flex; gap: 12px; font-size: 14px; }
-.prompt { font-size: 16px; font-weight: 600; margin: 6px 0; }
+.prompt { font-size: 16px; font-weight: 600; margin: 6px 0; white-space: pre-line; }
 .hints { margin: 8px 0; }
 .hint {
   background: var(--surface); border-left: 3px solid var(--warn);

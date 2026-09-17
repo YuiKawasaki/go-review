@@ -268,6 +268,29 @@ def cmd_seed_tsumego(settings: Settings, log: Log, args) -> int:
     return 0
 
 
+def cmd_seed_semeai(settings: Settings, log: Log, args) -> int:
+    """内蔵の攻め合い問題（選択式）を KataGo で検証して登録する。"""
+    from .semeai import import_verified, verify_shapes
+
+    if not settings.katago_available:
+        log("KataGo がありません。判定を検証できないので中止します。")
+        return 1
+
+    only = [t.strip() for t in (args.only or "").split(",") if t.strip()] or None
+    verified = verify_shapes(settings, log, visits=args.visits, only=only)
+    if not verified:
+        log("採用できる形がありませんでした。登録は行いません。")
+        return 1
+    if args.dry_run:
+        log("dry-run のため登録しません。")
+        return 0
+
+    with Database(settings.db_path) as db:
+        count = import_verified(db, verified)
+    log(f"攻め合い問題を登録しました: {count} 問")
+    return 0
+
+
 def cmd_build_refutations(settings: Settings, log: Log, args) -> int:
     """既存の解析結果から「その手を打つとどうなるか」の手順を組み立てる。
 
@@ -493,6 +516,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_seed.add_argument("--fill-missing", action="store_true",
                         help="登録済みで手順を持たない詰碁に、手順だけを付ける")
     p_seed.set_defaults(func=cmd_seed_tsumego)
+
+    p_seedsm = sub.add_parser("seed-semeai", help="内蔵の攻め合い問題を KataGo で検証して登録")
+    p_seedsm.add_argument("--visits", type=int, default=1500, help="1局面あたりの探索数")
+    p_seedsm.add_argument("--only", default="", help="検証する形の名前をカンマ区切りで指定")
+    p_seedsm.add_argument("--dry-run", action="store_true", help="検証だけ行い登録しない")
+    p_seedsm.set_defaults(func=cmd_seed_semeai)
 
     p_rf = sub.add_parser("build-refutations", help="既存の解析結果から手順を組み立てる")
     p_rf.add_argument("--game", help="この対局だけを対象にする（省略時は全局）")

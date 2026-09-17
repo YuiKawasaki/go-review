@@ -10,6 +10,9 @@ KataGo を使う判定（judge_with_engine）はここでは試さない。エ�
 import unittest
 
 from go_review.semeai import (
+    SHAPES,
+    BLACK,
+    build_question,
     check_shape,
     parse_diagram,
     predict,
@@ -213,6 +216,51 @@ class TestPredict(unittest.TestCase):
         r = predict(self._Fake(5, 7, 4))
         self.assertEqual(r["black_count"], 8)
         self.assertEqual(r["outcome"], "seki")
+
+
+class TestSeedShapes(unittest.TestCase):
+    """登録候補（SHAPES）が自己検査を通り、predict() の想定どおりの
+    外ダメ・内ダメになっていること。KataGo との一致は seed-semeai の
+    実行時（scratchpad の検証ログ）で別途確かめている。
+    """
+
+    def test_all_shapes_pass_self_check(self):
+        for name, diagram, to_play in SHAPES:
+            shape = check_shape(parse_diagram(name, diagram))
+            self.assertEqual(shape.faults, [], f"{name}: {shape.faults}")
+
+    def test_seki_shape_has_no_outside_dame(self):
+        name, diagram, to_play = SHAPES[0]
+        shape = check_shape(parse_diagram(name, diagram))
+        self.assertEqual((shape.black_outside, shape.white_outside, shape.shared), (0, 0, 2))
+        self.assertEqual(predict(shape, to_play)["outcome"], "seki")
+
+    def test_black_wins_shape_has_black_outside_dame(self):
+        name, diagram, to_play = SHAPES[1]
+        shape = check_shape(parse_diagram(name, diagram))
+        self.assertEqual((shape.black_outside, shape.white_outside, shape.shared), (2, 0, 2))
+        self.assertEqual(predict(shape, to_play)["outcome"], "black")
+
+    def test_white_wins_shape_has_white_outside_dame(self):
+        name, diagram, to_play = SHAPES[2]
+        shape = check_shape(parse_diagram(name, diagram))
+        self.assertEqual((shape.black_outside, shape.white_outside, shape.shared), (0, 2, 2))
+        self.assertEqual(predict(shape, to_play)["outcome"], "white")
+
+
+class TestBuildQuestion(unittest.TestCase):
+    def test_answer_index_matches_engine_outcome(self):
+        shape = check_shape(parse_diagram("seki", SHAPES[0][1]))
+        fake_judged = {"outcome": "seki", "black_ownership": 0.9, "white_ownership": -0.95}
+        q = build_question(shape, fake_judged, BLACK)
+        self.assertEqual(q["kind"], "choice")
+        self.assertEqual(q["choices"][q["answer"]], "セキ（どちらも取れない）")
+
+    def test_answer_index_for_black_win(self):
+        shape = check_shape(parse_diagram("bwin", SHAPES[1][1]))
+        fake_judged = {"outcome": "black", "black_ownership": 0.9, "white_ownership": 0.8}
+        q = build_question(shape, fake_judged, BLACK)
+        self.assertEqual(q["choices"][q["answer"]], "黒が勝つ（白が取られる）")
 
 
 if __name__ == "__main__":
