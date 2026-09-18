@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .config import Settings
-from .tagging import TAG_DESCRIPTIONS, TAG_LESSONS, TAG_VOCABULARY
+from .tagging import TAG_LESSONS, TAG_VOCABULARY
 
 SYSTEM_PROMPT = """あなたは九路盤の囲碁を学ぶ級位者のための解説者です。
 
@@ -23,23 +23,25 @@ SYSTEM_PROMPT = """あなたは九路盤の囲碁を学ぶ級位者のための�
 - 正解手は与えられたものが唯一の正解。別の手を提案しない。
 - 変化図に触れるときは「相手が最善で応じれば」という前提を必ず書く。
 - 数値の丸めや言い換えはしてよいが、事実の追加・推測はしない。
-- 出力は日本語。読み手は級位者なので、専門用語を使ったら必ずその場で
-  かっこ書きの言い換えを添える（例: 呼吸点（石のとなりの空き交点））。
+- 出力は日本語。読み手は用語をすでに知っているので、専門用語にかっこ書きの
+  言い換えは付けない（用語は盤面でタップすれば説明が出るため不要）。
+- 勝率や目数の「○%から○%へ、○ポイント低下」といった細かい数値の推移は
+  書かない。結論だけ端的に述べる。
 - 「勝率」ではなく「勝ちやすさ」のように、日常語に寄せて書く。"""
 
 # 解説文に並べる読み筋の手数。これ以上は文章では追えない。
 NARRATION_LINES = 6
 
-EXPLANATION_INSTRUCTION = """次の5構成で、全体800字以内で書いてください。見出しはこの5つを使ってください。
+EXPLANATION_INSTRUCTION = """次の4構成で、全体500字以内で書いてください。見出しはこの4つを使ってください。
 
 何が起きたか:
-相手の狙い:
 自分の見落とし:
 どう打つべきだったか:
 次に似た場面が来たら:
 
-「相手の狙い」と「どう打つべきだったか」では、渡された読み筋を
-1手ずつ順になぞって、その手が何をしている手なのかを書いてください。
+相手の応手（咎め方）は盤面の手順プレイヤーに別途表示されるので、ここでは書かないでください。
+「どう打つべきだったか」では、渡された読み筋を1手ずつ順になぞって、
+その手が何をしている手なのかを書いてください。
 「次に似た場面が来たら」は、盤の前で実際にできる確認動作を1つだけ書いてください。"""
 
 
@@ -207,54 +209,20 @@ def generate_explanation(
 def template_explanation(context: MoveContext) -> str:
     """API なしでも成立する解説。
 
-    5 段構成にしてあるのは、以前の 3 段構成が「勝率が何 pt 下がった」で
-    終わっていて、読んでも次に何をすればよいか分からなかったため。
-    数値だけでなく、読み筋を 1 手ずつなぞり、最後に次回使える確認動作を
-    1 つ残す。使う事実はすべて解析エンジン由来で、ここで読みはしない。
+    4 段構成。相手の咎め方は盤面下の手順プレイヤーで別途見られるので
+    文章では繰り返さない。勝率・目数の細かい推移も書かず、結論と
+    次に打つべき手、次回使える確認動作だけを残す。使う事実はすべて
+    解析エンジン由来で、ここで読みはしない。
     """
     color = "黒" if context.my_color == "B" else "白"
     move = context.actual_move or "パス"
     lines: list[str] = []
 
     lines.append("何が起きたか:")
-    head = (
-        f"{context.move_no}手目、{color}番のあなたは {move} と打ちました。"
-        f"AI の見立てでは、この一手であなたの勝ちやすさが "
-        f"{context.winrate_before:.0f}% から {context.winrate_after:.0f}% へ、"
-        f"{context.actual_winrate_drop:.0f}ポイント下がりました。"
+    lines.append(
+        f"{context.move_no}手目、{color}番のあなたが打った {move} は、"
+        "AIの評価では悪手でした。"
     )
-    if context.score_before is not None and context.score_after is not None:
-        loss = context.score_before - context.score_after
-        if loss >= 1.0:
-            head += f"地の見込みでいうと、およそ {loss:.0f}目 の損です。"
-    lines.append(head)
-
-    lines.append("")
-    lines.append("相手の狙い:")
-    if context.punish_pv:
-        lines.append(
-            f"{move} のあと、相手がいちばん厳しく打ってくると、次のように進みます。"
-        )
-        lines.extend(
-            _pv_prompt_lines(context.punish_pv, context.punish_pv_comments, NARRATION_LINES)
-        )
-        if len(context.punish_pv) > NARRATION_LINES:
-            lines.append(f"（このあと {len(context.punish_pv) - NARRATION_LINES} 手続きます。盤面で確認できます）")
-        if context.punish_end_winrate is not None:
-            lines.append(
-                "ここまで進んだ時点で、あなたの勝ちやすさは "
-                f"{context.punish_end_winrate:.0f}% です。"
-            )
-        lines.append(
-            "これは双方が最善で打った場合の一本道です。"
-            "実際の相手が同じように打ってくるとは限りません。"
-        )
-    else:
-        lines.append(
-            f"{move} を打った直後、あなたの勝ちやすさは "
-            f"{context.winrate_after:.0f}% まで下がっています。"
-            "この局面の具体的な咎め方は、今回は記録できていません。"
-        )
 
     lines.append("")
     lines.append("自分の見落とし:")
@@ -262,14 +230,7 @@ def template_explanation(context: MoveContext) -> str:
 
     lines.append("")
     lines.append("どう打つべきだったか:")
-    gain = context.best_winrate - context.winrate_after
-    best_head = (
-        f"ここでは {context.best_move} と打てば、勝ちやすさを "
-        f"{context.best_winrate:.0f}% に保てました。"
-    )
-    if gain >= 1.0:
-        best_head += f"実戦との差は {gain:.0f}ポイントです。"
-    lines.append(best_head)
+    lines.append(f"ここでは {context.best_move} と打つべきでした。")
     if context.best_pv:
         lines.append("相手が最善で応じても、次のように進みます。")
         lines.extend(
@@ -285,24 +246,18 @@ def template_explanation(context: MoveContext) -> str:
     if context.opponent_missed is True:
         lines.append("")
         lines.append(
-            "補足: 実戦では相手もこの咎め方に気づいていませんでした。"
+            f"補足: 実戦では相手もこの咎め方に気づいていませんでした。"
             f"結果として損はしていませんが、{move} 自体は不利になる手です。"
         )
     return "\n".join(lines)
 
 
 def _oversight_text(context: MoveContext) -> str:
-    base = (
-        f"{context.actual_move or 'この手'} で勝ちやすさを "
-        f"{context.actual_winrate_drop:.0f}ポイント落としました。"
-    )
+    move = context.actual_move or "この手"
     if not context.tags:
-        return base + "今回は、決まったミスの型には当てはまりませんでした。"
-    glosses = [
-        f"「{tag}」（{TAG_DESCRIPTIONS[tag]}）" if tag in TAG_DESCRIPTIONS else f"「{tag}」"
-        for tag in context.tags
-    ]
-    return base + f"これは {'、'.join(glosses)} にあたるミスです。"
+        return f"{move} は、今回は決まったミスの型には当てはまりませんでした。"
+    names = "、".join(f"「{tag}」" for tag in context.tags)
+    return f"{move} は {names} にあたるミスです。"
 
 
 def _lesson_text(context: MoveContext) -> str:

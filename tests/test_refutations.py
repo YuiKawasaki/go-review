@@ -163,7 +163,7 @@ class TestRegenerate(RefutationTestCase):
         problem_id = self._problem_ids()[0]
         text = regenerate_explanation(self.db, problem_id, self.settings, client=None)
         self.assertIsNotNone(text)
-        for heading in ("何が起きたか:", "相手の狙い:", "自分の見落とし:",
+        for heading in ("何が起きたか:", "自分の見落とし:",
                         "どう打つべきだったか:", "次に似た場面が来たら:"):
             self.assertIn(heading, text)
 
@@ -189,9 +189,26 @@ class TestTemplateWording(unittest.TestCase):
 
     def test_has_all_sections(self):
         text = template_explanation(self._context())
-        for heading in ("何が起きたか:", "相手の狙い:", "自分の見落とし:",
+        for heading in ("何が起きたか:", "自分の見落とし:",
                         "どう打つべきだったか:", "次に似た場面が来たら:"):
             self.assertIn(heading, text)
+
+    def test_no_opponent_aim_section(self):
+        """相手の咎め方は盤面下の手順プレイヤーに出るので、文章では繰り返さない。"""
+        text = template_explanation(self._context())
+        self.assertNotIn("相手の狙い:", text)
+
+    def test_no_percent_point_wording(self):
+        """勝率・目数の細かい推移（○%→○%、○ポイント）は書かない。"""
+        text = template_explanation(self._context())
+        self.assertNotIn("ポイント", text)
+        self.assertNotIn("%", text)
+
+    def test_no_parenthetical_tag_description(self):
+        """用語の説明はタップで見られるので、解説文中の（）書きは付けない。"""
+        text = template_explanation(self._context(tags=["アタリ見落とし"]))
+        oversight = text.split("自分の見落とし:")[1].split("どう打つべきだったか:")[0]
+        self.assertNotIn("（", oversight)
 
     def test_lesson_follows_the_tag(self):
         text = template_explanation(self._context(tags=["アタリ見落とし"]))
@@ -203,10 +220,6 @@ class TestTemplateWording(unittest.TestCase):
             best_pv=pv, best_pv_comments=[""] * len(pv),
         ))
         self.assertIn("盤面で確認できます", text)
-
-    def test_no_score_line_when_score_missing(self):
-        text = template_explanation(self._context(score_before=None, score_after=None))
-        self.assertNotIn("目 の損", text)
 
 
 class TestTsumegoImport(unittest.TestCase):
