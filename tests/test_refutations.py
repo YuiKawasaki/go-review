@@ -164,7 +164,7 @@ class TestRegenerate(RefutationTestCase):
         text = regenerate_explanation(self.db, problem_id, self.settings, client=None)
         self.assertIsNotNone(text)
         for heading in ("何が起きたか:", "自分の見落とし:",
-                        "どう打つべきだったか:", "次に似た場面が来たら:"):
+                        "結果の違い:", "次に似た場面が来たら:"):
             self.assertIn(heading, text)
 
     def test_saved_to_db(self):
@@ -190,13 +190,18 @@ class TestTemplateWording(unittest.TestCase):
     def test_has_all_sections(self):
         text = template_explanation(self._context())
         for heading in ("何が起きたか:", "自分の見落とし:",
-                        "どう打つべきだったか:", "次に似た場面が来たら:"):
+                        "結果の違い:", "次に似た場面が来たら:"):
             self.assertIn(heading, text)
 
     def test_no_opponent_aim_section(self):
         """相手の咎め方は盤面下の手順プレイヤーに出るので、文章では繰り返さない。"""
         text = template_explanation(self._context())
         self.assertNotIn("相手の狙い:", text)
+
+    def test_no_ai_verdict_wording(self):
+        """「AIの評価では」のような前置きは付けず、事実だけを言い切る。"""
+        text = template_explanation(self._context())
+        self.assertNotIn("AIの評価では", text)
 
     def test_no_percent_point_wording(self):
         """勝率・目数の細かい推移（○%→○%、○ポイント）は書かない。"""
@@ -207,19 +212,38 @@ class TestTemplateWording(unittest.TestCase):
     def test_no_parenthetical_tag_description(self):
         """用語の説明はタップで見られるので、解説文中の（）書きは付けない。"""
         text = template_explanation(self._context(tags=["アタリ見落とし"]))
-        oversight = text.split("自分の見落とし:")[1].split("どう打つべきだったか:")[0]
+        oversight = text.split("自分の見落とし:")[1].split("結果の違い:")[0]
         self.assertNotIn("（", oversight)
 
     def test_lesson_follows_the_tag(self):
         text = template_explanation(self._context(tags=["アタリ見落とし"]))
         self.assertIn("呼吸点", text.split("次に似た場面が来たら:")[1])
 
-    def test_long_pv_is_trimmed_in_text(self):
+    def test_no_move_by_move_pv_in_text(self):
+        """読み筋の逐一なぞりは盤面下のプレイヤーと重複するので書かない。"""
         pv = [f"A{i}" for i in range(1, 11)]
         text = template_explanation(self._context(
             best_pv=pv, best_pv_comments=[""] * len(pv),
         ))
-        self.assertIn("盤面で確認できます", text)
+        outcome = text.split("結果の違い:")[1].split("次に似た場面が来たら:")[0]
+        self.assertNotIn("1. ", outcome)
+
+    def test_outcome_reports_capture_count_and_region(self):
+        """取れた石数と大まかな場所を、読み筋を辿らず一言で言う。"""
+        text = template_explanation(self._context(
+            best_move="G7",
+            best_pv=["G7", "F3"],
+            best_pv_comments=["自分: 相手の石を 3 子取る", ""],
+        ))
+        outcome = text.split("結果の違い:")[1].split("次に似た場面が来たら:")[0]
+        self.assertIn("3子取り込め", outcome)
+        self.assertIn("右上", outcome)
+
+    def test_outcome_falls_back_to_best_move_only(self):
+        """石を取る・取られる進行が記録されていない場合の最低限の一言。"""
+        text = template_explanation(self._context(actual_move="", best_move="D4"))
+        outcome = text.split("結果の違い:")[1].split("次に似た場面が来たら:")[0]
+        self.assertIn("D4", outcome)
 
 
 class TestTsumegoImport(unittest.TestCase):

@@ -103,6 +103,7 @@ def _create_problem(
         punish_pv=loads(punish_var["pv_moves"], []) if punish_var else [],
         opponent_missed=opponent_missed_punishment(game, move_no, analyses, my_color),
         total_moves=game.move_count,
+        size=game.size,
     )
 
     # Claude はタグの補完と解説文の作成のみ。正解手には関与させない。
@@ -345,6 +346,7 @@ def regenerate_explanation(
         # 分からないものは書かない。
         opponent_missed=None,
         total_moves=game_row["move_count"] or game.move_count,
+        size=game.size,
     )
     text = generate_explanation(client, context)
     db.execute(

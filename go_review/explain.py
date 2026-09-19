@@ -10,10 +10,12 @@ API キーが無い場合はテンプレート生成にフォールバックす�
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
 from .config import Settings
+from .sgf import gtp_to_coord
 from .tagging import TAG_LESSONS, TAG_VOCABULARY
 
 SYSTEM_PROMPT = """あなたは九路盤の囲碁を学ぶ級位者のための解説者です。
@@ -29,19 +31,19 @@ SYSTEM_PROMPT = """あなたは九路盤の囲碁を学ぶ級位者のための�
   書かない。結論だけ端的に述べる。
 - 「勝率」ではなく「勝ちやすさ」のように、日常語に寄せて書く。"""
 
-# 解説文に並べる読み筋の手数。これ以上は文章では追えない。
-NARRATION_LINES = 6
-
-EXPLANATION_INSTRUCTION = """次の4構成で、全体500字以内で書いてください。見出しはこの4つを使ってください。
+EXPLANATION_INSTRUCTION = """次の4構成で、全体400字以内で書いてください。見出しはこの4つを使ってください。
 
 何が起きたか:
 自分の見落とし:
-どう打つべきだったか:
+結果の違い:
 次に似た場面が来たら:
 
-相手の応手（咎め方）は盤面の手順プレイヤーに別途表示されるので、ここでは書かないでください。
-「どう打つべきだったか」では、渡された読み筋を1手ずつ順になぞって、
-その手が何をしている手なのかを書いてください。
+「何が起きたか」は、打った手を事実として1文で書くだけにしてください
+（「AIの評価では」のような前置きや、悪手・好手といった評価語は付けない）。
+「結果の違い」は、渡された読み筋を1手ずつなぞらず、実際に打った手と
+正解手とで結果がどう変わったか（取れた石数・地になった場所など）を
+1〜2文で端的に書いてください。読み筋の手順そのものは盤面の手順
+プレイヤーに別途表示されるので、ここでは書かないでください。
 「次に似た場面が来たら」は、盤の前で実際にできる確認動作を1つだけ書いてください。"""
 
 
@@ -68,6 +70,7 @@ class MoveContext:
     punish_end_winrate: Optional[float] = None
     opponent_missed: Optional[bool] = None
     total_moves: int = 0
+    size: int = 9
 
     def to_prompt(self) -> str:
         color = "黒" if self.my_color == "B" else "白"
@@ -209,35 +212,26 @@ def generate_explanation(
 def template_explanation(context: MoveContext) -> str:
     """API なしでも成立する解説。
 
-    4 段構成。相手の咎め方は盤面下の手順プレイヤーで別途見られるので
-    文章では繰り返さない。勝率・目数の細かい推移も書かず、結論と
-    次に打つべき手、次回使える確認動作だけを残す。使う事実はすべて
-    解析エンジン由来で、ここで読みはしない。
+    4 段構成。読み筋を1手ずつなぞる説明は盤面下の手順プレイヤーと
+    重複するのでやめ、代わりに「結果として何が変わったか」（取った・
+    取られた石数、地になった場所）を短く述べる。勝率・目数の細かい
+    推移や「AIの評価では」といった前置きも書かない。使う事実は
+    すべて解析エンジン由来で、ここで読みはしない。
     """
     color = "黒" if context.my_color == "B" else "白"
     move = context.actual_move or "パス"
     lines: list[str] = []
 
     lines.append("何が起きたか:")
-    lines.append(
-        f"{context.move_no}手目、{color}番のあなたが打った {move} は、"
-        "AIの評価では悪手でした。"
-    )
+    lines.append(f"{context.move_no}手目、{color}番のあなたが打った {move} は、悪手でした。")
 
     lines.append("")
     lines.append("自分の見落とし:")
     lines.append(_oversight_text(context))
 
     lines.append("")
-    lines.append("どう打つべきだったか:")
-    lines.append(f"ここでは {context.best_move} と打つべきでした。")
-    if context.best_pv:
-        lines.append("相手が最善で応じても、次のように進みます。")
-        lines.extend(
-            _pv_prompt_lines(context.best_pv, context.best_pv_comments, NARRATION_LINES)
-        )
-        if len(context.best_pv) > NARRATION_LINES:
-            lines.append(f"（このあと {len(context.best_pv) - NARRATION_LINES} 手続きます。盤面で確認できます）")
+    lines.append("結果の違い:")
+    lines.append(_outcome_diff_text(context))
 
     lines.append("")
     lines.append("次に似た場面が来たら:")
@@ -250,6 +244,78 @@ def template_explanation(context: MoveContext) -> str:
             f"結果として損はしていませんが、{move} 自体は不利になる手です。"
         )
     return "\n".join(lines)
+
+
+# variations.pv_comments が出す決まった書式（"自分: 相手の石を 4 子取る" /
+# "相手: あなたの石を 2 子取る"）から、取った・取られた石数を拾う。
+# 自由記述ではなくこちらが生成した文字列なので、正規表現での抽出は安全。
+_CAPTURE_RE = re.compile(r"^(自分|相手): .*?(相手|あなた)の石を (\d+) 子取る")
+
+
+def _capture_totals(comments: list[str]) -> tuple[int, int]:
+    """(自分が取った石の合計, 自分が取られた石の合計) を返す。"""
+    gained = lost = 0
+    for c in comments:
+        m = _CAPTURE_RE.search(c or "")
+        if not m:
+            continue
+        actor, target, n = m.group(1), m.group(2), int(m.group(3))
+        if actor == "自分" and target == "相手":
+            gained += n
+        elif actor == "相手" and target == "あなた":
+            lost += n
+    return gained, lost
+
+
+def _region_name(gtp: str, size: int) -> str:
+    """座標を「右上」「下辺」「中央」のような大まかな場所の名前にする。
+
+    盤を縦横それぞれ3分割するだけの機械的な変換で、読みは含まない。
+    """
+    try:
+        col, row = gtp_to_coord(gtp, size)
+    except Exception:
+        return ""
+    third = size / 3
+    col_name = "左" if col < third else ("右" if col >= size - third else "")
+    row_name = "上" if row < third else ("下" if row >= size - third else "")
+    if not col_name and not row_name:
+        return "中央"
+    if not col_name:
+        return f"{row_name}辺"
+    if not row_name:
+        return f"{col_name}辺"
+    return f"{col_name}{row_name}"
+
+
+def _outcome_diff_text(context: MoveContext) -> str:
+    """実戦の手と正解手とで、結果がどう変わったかを短く述べる。
+
+    読み筋を1手ずつなぞらず、最終的な違い（取れた・取られた石数、
+    場所）だけを、囲碁の解説書のように結論だけ言い切る。
+    手順そのものは盤面下のプレイヤーで見られる。
+    """
+    best_gained, _ = _capture_totals(context.best_pv_comments)
+    _, actual_lost = _capture_totals(context.punish_pv_comments)
+    best_move, actual_move = context.best_move, context.actual_move
+    best_region = _region_name(best_move, context.size)
+    actual_region = _region_name(actual_move, context.size) if actual_move else ""
+
+    if best_gained and actual_lost:
+        return (
+            f"正解の{best_move}なら{best_region}の相手の石を{best_gained}子取り込めましたが、"
+            f"実戦の{actual_move}では逆に{actual_region}の自分の石が{actual_lost}子取られています。"
+        )
+    if best_gained:
+        return f"正解の{best_move}なら、{best_region}の相手の石を{best_gained}子取り込めました。"
+    if actual_lost:
+        return f"実戦の{actual_move}では、{actual_region}の自分の石が{actual_lost}子取られています。"
+    if actual_region and best_region != actual_region:
+        return (
+            f"実戦は{actual_region}向きの一手でしたが、正解の{best_move}は"
+            f"{best_region}向きの一手でした。盤面下の手順で違いを確認できます。"
+        )
+    return f"正解は{best_move}でした。盤面下の手順で違いを確認できます。"
 
 
 def _oversight_text(context: MoveContext) -> str:
