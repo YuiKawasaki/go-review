@@ -4,6 +4,12 @@
 
 import { Board, colLetter } from './goban.js';
 
+const STAR_POINTS = {
+  9: [[2, 2], [6, 2], [4, 4], [2, 6], [6, 6]],
+  13: [[3, 3], [9, 3], [6, 6], [3, 9], [9, 9]],
+  19: [[3, 3], [9, 3], [15, 3], [3, 9], [9, 9], [15, 9], [3, 15], [9, 15], [15, 15]],
+};
+
 const MARKER_STYLE = {
   good:     { color: '#1f9d55', shape: 'circle' },
   dubious:  { color: '#d69e2e', shape: 'triangle' },
@@ -151,7 +157,7 @@ export class BoardView {
     }
 
     // 星
-    const stars = this.size === 9 ? [[2, 2], [6, 2], [4, 4], [2, 6], [6, 6]] : [];
+    const stars = STAR_POINTS[this.size] || [];
     ctx.fillStyle = '#4a3a20';
     for (const [c, r] of stars) {
       const [x, y] = this.toPixel(c, r);

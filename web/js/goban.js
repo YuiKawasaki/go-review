@@ -10,6 +10,11 @@ export function sgfToCoord(s, size) {
   return [col, row];
 }
 
+export function coordToSgf(c) {
+  if (!c) return '';
+  return String.fromCharCode(97 + c[0]) + String.fromCharCode(97 + c[1]);
+}
+
 export function colLetter(col) {
   return GTP_COLS[col];
 }

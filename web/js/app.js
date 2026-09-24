@@ -8,6 +8,7 @@ import { BoardView } from './board.js';
 import { Board, buildStates, coordToGtp, gtpToCoord, opposite, parseSgf } from './goban.js';
 import { renderExplanation } from './glossary.js';
 import { createSequencePlayer } from './sequence.js';
+import { viewFreePlay } from './freeplay.js';
 import * as store from './store.js';
 
 const app = document.getElementById('app');
@@ -1103,6 +1104,7 @@ const routes = [
   [/^#\/quiz$/, viewQuiz],
   [/^#\/tsumego$/, viewTsumegoQuiz],
   [/^#\/tsumego-log$/, viewTsumego],
+  [/^#\/free$/, () => viewFreePlay(app)],
   [/^#\/dashboard$/, viewDashboard],
 ];
 
