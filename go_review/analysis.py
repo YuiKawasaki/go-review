@@ -103,8 +103,21 @@ def analyze_game(
             truncated = True
         else:
             log(f"2 パス目: {len(refine_turns)} 局面を {settings.pass2_visits} visits で精査します")
-            refined = _analyze_turns(db, engine, game, refine_turns, settings.pass2_visits, {})
-            cache.update(refined)
+            # 1 手ずつ問い合わせる。複数手をまとめて頼むと、限られた解析
+            # スレッドが局面間で奪い合いになり、1 局面あたりの実時間が
+            # 大きく伸びる（局所の攻め合いが多い将棋ほど顕著）。実測では
+            # 単独なら 1500 visits が 1 局面 556 秒で終わるのに対し、
+            # 10 局面まとめて頼むと 900 秒の無応答タイムアウトに達して
+            # 1 局面も終わらなかった。1 手ずつに分ければ、途中で時間切れに
+            # なっても _analyze_turns が手ごとに commit するので、それまでの
+            # 分は次回に引き継がれる。
+            for turn in refine_turns:
+                if deadline and time.monotonic() > deadline:
+                    truncated = True
+                    log(f"上限時間に達したため中断しました（{game_id}）")
+                    break
+                refined = _analyze_turns(db, engine, game, [turn], settings.pass2_visits, {})
+                cache.update(refined)
             _persist_moves(db, game_id, game, my_color, cache, pass_no=2, only=[b["move_no"] for b in bad])
             bad = extract_bad_moves(db, game_id, my_color, settings)
 
