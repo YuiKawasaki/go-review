@@ -707,10 +707,10 @@ async function viewQuiz() {
           el('button', {
             onclick: () => { queue.push(problem); position += 1; renderProblem(); },
           }, 'もう一度'),
-          el('button', {
+          problem.source_game_id ? el('button', {
             class: 'link',
             onclick: () => nav(`#/game/${problem.source_game_id}`),
-          }, '実戦の進行を見る'),
+          }, '実戦の進行を見る') : null,
         ]),
       );
     }
@@ -728,7 +728,9 @@ async function viewQuiz() {
         el('span', { class: 'muted' }, ` 難易度 ${problem.difficulty || '-'}`),
         el('span', { class: 'muted' }, ` ${problem.player_to_move === 'B' ? '黒番' : '白番'}`),
       ]),
-      el('p', { class: 'prompt' }, 'このとき、どう打つべきだったか。'),
+      el('p', { class: 'prompt' }, problem.source_game_id
+        ? 'このとき、どう打つべきだったか。'
+        : `序盤（${(problem.tags || []).filter((t) => t !== '序盤').join('・')}）の局面です。最善の一手はどこか。`),
       canvas,
       seqTop,
       tapHint,

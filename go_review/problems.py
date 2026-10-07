@@ -365,7 +365,8 @@ def problem_payload(db: Database, problem_id: str) -> Optional[dict]:
     )
     return {
         "problem_id": row["id"],
-        "source_game_id": row["game_id"],
+        # 序盤の問題は実戦の対局に由来しないので、棋譜へのリンクを出させない
+        "source_game_id": None if row["game_id"] == "OPENING" else row["game_id"],
         "move_number": row["move_no"],
         "board_position": row["position_sgf"],
         "player_to_move": row["player_to_move"],

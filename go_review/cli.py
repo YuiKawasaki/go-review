@@ -305,6 +305,24 @@ def cmd_seed_semeai_sequence(settings: Settings, log: Log, args) -> int:
     return 0
 
 
+def cmd_seed_openings(settings: Settings, log: Log, args) -> int:
+    """9路の序盤（天元・三々・高目）の問題を KataGo で作って演習に登録する。"""
+    from .katago import get_engine
+    from .opening_seed import build_opening_problems
+
+    if not settings.katago_available:
+        log("KataGo がありません。正解手を決められないので中止します。")
+        return 1
+    engine = get_engine(settings, allow_stub=False)
+    try:
+        with Database(settings.db_path) as db:
+            count = build_opening_problems(db, engine, log)
+    finally:
+        engine.close()
+    log(f"序盤の問題を登録しました: {count} 問")
+    return 0
+
+
 def cmd_build_refutations(settings: Settings, log: Log, args) -> int:
     """既存の解析結果から「その手を打つとどうなるか」の手順を組み立てる。
 
@@ -539,6 +557,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_seedseq = sub.add_parser("seed-semeai-sequence", help="外ダメ優先の手順プレイヤー形式を登録")
     p_seedseq.set_defaults(func=cmd_seed_semeai_sequence)
+
+    p_open = sub.add_parser("seed-openings", help="9路の序盤（天元・三々・高目）の問題を演習に登録")
+    p_open.set_defaults(func=cmd_seed_openings)
 
     p_rf = sub.add_parser("build-refutations", help="既存の解析結果から手順を組み立てる")
     p_rf.add_argument("--game", help="この対局だけを対象にする（省略時は全局）")
