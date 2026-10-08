@@ -57,6 +57,28 @@ class BuildTest(unittest.TestCase):
         self.assertIsNone(payload["source_game_id"])
         self.assertTrue(any(r["kind"] == "best" for r in payload["refutations"]))
 
+    def test_opening_problem_has_no_actual_sequence(self):
+        build_opening_problems(self.db, StubEngine())
+        self.assertEqual(problem_payload(self.db, "O-tengen-1")["actual_sequence"], [])
+
+    def test_game_problem_carries_real_continuation(self):
+        from tests.fixtures import SAMPLE_SGF
+
+        self.db.execute(
+            "INSERT INTO games (id, sgf_hash, sgf, my_color) VALUES (?,?,?,?)",
+            ("G-0001", "h", SAMPLE_SGF, "B"),
+        )
+        self.db.execute(
+            "INSERT INTO problems (id, game_id, move_no, correct_moves) VALUES (?,?,?,?)",
+            ("P-0001", "G-0001", 3, "[]"),
+        )
+        self.db.commit()
+        payload = problem_payload(self.db, "P-0001")
+        game = parse_game(SAMPLE_SGF)
+        self.assertEqual(payload["actual_sequence"][0], "A7")   # 3 手目 B[ac]
+        self.assertEqual(len(payload["actual_sequence"]), min(10, len(game.moves) - 2))
+        self.assertEqual(len(payload["actual_comments"]), len(payload["actual_sequence"]))
+
     def test_rerun_replaces_instead_of_duplicating(self):
         build_opening_problems(self.db, StubEngine())
         build_opening_problems(self.db, StubEngine())

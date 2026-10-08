@@ -35,7 +35,7 @@ const CAVEAT = '双方が最善で打った場合の一本道です。実際の�
  * @param {number}   opts.size         盤の大きさ
  * @param {object}   opts.startState   問題の局面 {grid, numbers?}
  * @param {string}   opts.firstColor   最初の 1 手を打つ側 'B' | 'W'
- * @param {Array}    opts.sequences    [{key, label, pv, comments, note, tone}]
+ * @param {Array}    opts.sequences    [{key, label, pv, comments, note, caveat}]
  * @returns {{element: HTMLElement, show: (key:string)=>void}}
  */
 export function createSequencePlayer({ view, size, startState, firstColor, sequences }) {
@@ -57,9 +57,9 @@ export function createSequencePlayer({ view, size, startState, firstColor, seque
   const controls = el('div', { class: 'row seq-controls' });
   const commentBox = el('p', { class: 'pv-comment' });
   const noteBox = el('p', { class: 'muted small' });
+  const caveatBox = el('p', { class: 'muted small' });
 
-  panel.append(tabs, controls, commentBox, noteBox,
-    el('p', { class: 'muted small' }, CAVEAT));
+  panel.append(tabs, controls, commentBox, noteBox, caveatBox);
 
   function stateAt(n) {
     const board = new Board(size);
@@ -129,6 +129,7 @@ export function createSequencePlayer({ view, size, startState, firstColor, seque
       commentBox.textContent = `${current.pv[step - 1]}${who} ${text}`;
     }
     noteBox.textContent = current.note || '';
+    caveatBox.textContent = current.caveat ?? CAVEAT;
   }
 
   function go(delta) {

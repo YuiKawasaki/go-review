@@ -1,7 +1,10 @@
 """復習スケジューリング（FR-10）。
 
-初見で不正解 → 翌日 → 3日後 → 7日後 → 14日後、5回連続正解で卒業。
-一度でも不正解なら間隔をリセットして翌日に戻す。
+正解するたびに間隔を広げ（4日後 → 10日後）、3回連続正解で卒業。
+不正解なら連続正解をリセットして翌日にやり直す。
+
+以前は 5 回連続（1・3・7・14日）で卒業だったが、1 局から 2〜3 問ずつ
+増えるのに対して卒業が遅すぎ、未消化が増え続けて続けられなくなった。
 """
 from __future__ import annotations
 
@@ -27,9 +30,11 @@ def next_due(streak: int, settings: Settings, today: Optional[date] = None) -> O
     today = today or _today()
     if streak >= settings.graduate_streak:
         return None
-    intervals = settings.review_intervals
-    idx = min(max(streak - 1, 0), len(intervals) - 1)
-    days = intervals[idx] if streak > 0 else intervals[0]
+    if streak <= 0:
+        days = 1
+    else:
+        intervals = settings.review_intervals
+        days = intervals[min(streak - 1, len(intervals) - 1)]
     return (today + timedelta(days=days)).isoformat()
 
 
@@ -121,50 +126,64 @@ def due_problems(
     today: Optional[date] = None,
     limit: Optional[int] = None,
 ) -> list[dict]:
-    """本日出題する問題を選ぶ。
+    """本日出題する問題を選ぶ。先頭が今日の分、そのあとが追加練習の分。
 
-    期日超過分は優先度順（敗着候補 > 悪手）に、次いで期日の古い順。
-    初見（未出題）の問題も対象に含める。
+    今日の分（最大 limit 問）:
+      1. 期日が来た復習を、期日の古い順に
+      2. 空きがあれば、まだ一度も解いていない問題を最大 daily_new_limit 問
+         （敗着候補を優先し、残りはランダム）
+    を選んだうえで、出題順をランダムにする。
 
-    この優先順だけで日々の上限件数に切ると、期日超過が上限を上回る
-    日が続く限り「毎日まったく同じ上位10問」が出続けてしまう
-    （severity_rank / 期日 / 難易度は答えるまで変化しない静的な値なので、
-    上限に収まらない分は翌日も同じ並びで弾かれ続ける）。そこで、今日の
-    優先分のあとに、卒業していない問題の残り全部を続けて返す。間違えた
-    ことのある問題を先に、それ以外をあとに、それぞれランダムな順で
-    並べる——「間違えたもの中心にランダムに」出すため。
+    新しい問題に上限を設けるのは、1 局から 2〜3 問ずつ増えるのに対して
+    以前は未出題を毎日すべて対象にしていたため、復習が新問に押し出され、
+    未消化が増え続けて続けられなくなったから。
+
+    追加練習の分は、卒業していない残りから最大 daily_extra_limit 問
+    （間違えたことのある問題を先に、ランダム順）。全部を並べると
+    終わりが見えず負担になるので上限を設ける。
+
+    乱数は日付で固定する。同じ日に何度書き出しても選ばれる問題が
+    入れ替わらないようにするため。
     """
     today = today or _today()
     limit = limit or settings.daily_review_limit
-    base_sql = """
+    rng = random.Random(today.isoformat())
+    rows = db.query(
+        """
         SELECT p.id, p.game_id, p.move_no, p.difficulty, s.streak, s.next_due_at,
                s.graduated, s.last_result, b.severity
         FROM problems p
         LEFT JOIN problem_state s ON s.problem_id = p.id
         LEFT JOIN bad_moves b ON b.game_id = p.game_id AND b.move_no = p.move_no
         WHERE COALESCE(s.graduated, 0) = 0
-    """
-    due_rows = db.query(
-        base_sql + " AND (s.next_due_at IS NULL OR s.next_due_at <= ?)",
-        (today.isoformat(),),
+        ORDER BY p.id
+        """
     )
 
-    def sort_key(row) -> tuple:
-        severity_rank = 0 if row["severity"] == CRITICAL else 1
-        due = row["next_due_at"] or ""      # 未出題を先に
-        return (severity_rank, due, -(row["difficulty"] or 0))
+    def severity_rank(row) -> int:
+        return 0 if row["severity"] == CRITICAL else 1
 
-    primary = sorted(due_rows, key=sort_key)[:limit]
+    reviews = sorted(
+        (r for r in rows if r["next_due_at"] and r["next_due_at"] <= today.isoformat()),
+        key=lambda r: (r["next_due_at"], severity_rank(r)),
+    )
+    fresh = [r for r in rows if r["next_due_at"] is None]
+    fresh.sort(key=lambda r: (severity_rank(r), rng.random()))
+
+    primary = reviews[:limit]
+    room = min(limit - len(primary), settings.daily_new_limit)
+    primary += fresh[:max(room, 0)]
+    rng.shuffle(primary)
+
     primary_ids = {r["id"] for r in primary}
-
-    all_rows = db.query(base_sql)
-    rest = [r for r in all_rows if r["id"] not in primary_ids]
+    rest = [r for r in rows if r["id"] not in primary_ids]
     wrong = [r for r in rest if r["last_result"] == VERDICT_WRONG]
     others = [r for r in rest if r["last_result"] != VERDICT_WRONG]
-    random.shuffle(wrong)
-    random.shuffle(others)
+    rng.shuffle(wrong)
+    rng.shuffle(others)
+    extra = (wrong + others)[:settings.daily_extra_limit]
 
-    def payload(r: object) -> dict:
+    def payload(r: object, is_extra: bool) -> dict:
         return {
             "problem_id": r["id"],
             "game_id": r["game_id"],
@@ -174,9 +193,10 @@ def due_problems(
             "next_due_at": r["next_due_at"],
             "severity": r["severity"],
             "first_time": r["next_due_at"] is None,
+            "extra": is_extra,
         }
 
-    return [payload(r) for r in primary] + [payload(r) for r in wrong + others]
+    return [payload(r, False) for r in primary] + [payload(r, True) for r in extra]
 
 
 def accuracy(db: Database, first_attempt_only: bool = False) -> Optional[float]:
@@ -197,7 +217,7 @@ def accuracy(db: Database, first_attempt_only: bool = False) -> Optional[float]:
 def stats(db: Database, settings: Settings) -> dict:
     total = db.scalar("SELECT COUNT(*) FROM problems") or 0
     graduated = db.scalar("SELECT COUNT(*) FROM problem_state WHERE graduated = 1") or 0
-    due = len(due_problems(db, settings, limit=10_000))
+    due = sum(1 for p in due_problems(db, settings) if not p["extra"])
     return {
         "total_problems": total,
         "graduated": graduated,

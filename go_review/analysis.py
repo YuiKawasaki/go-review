@@ -131,9 +131,14 @@ def analyze_game(
         tag_bad_moves(db, game, game_id, my_color, bad, cache, settings)
         build_variations(db, game, game_id, my_color, bad, cache, settings)
         if not stub:
+            from .refutations import build_for_game_problems
+
             problems = generate_problems(
                 db, game, game_id, my_color, bad, cache, settings, client
             )
+            # 押した手ごとの手順（正解の手順・咎められる手順）。これが無いと
+            # 演習で答え合わせをしても盤で手順を見せられない。
+            build_for_game_problems(db, game_id, settings, log)
         else:
             log("スタブ解析のため問題生成は行いません。")
 

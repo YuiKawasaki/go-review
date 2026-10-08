@@ -197,10 +197,13 @@ def problems_payload(db: Database, settings: Settings) -> dict:
 
 
 def due_payload(db: Database, settings: Settings) -> dict:
+    problems = due_problems(db, settings)
     return {
         "generated_at": _now(),
         "date": datetime.now(timezone.utc).date().isoformat(),
-        "limit": settings.daily_review_limit,
-        "problems": due_problems(db, settings),
+        "limit": settings.daily_review_limit,      # 詰碁の今日の分
+        # 演習の今日の分の件数。未出題の上限で limit より少ない日があるので実数を渡す
+        "problems_today": sum(1 for p in problems if not p["extra"]),
+        "problems": problems,
         "tsumego": due_tsumego(db, settings=settings),
     }

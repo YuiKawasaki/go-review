@@ -97,9 +97,11 @@ class Settings:
     pv_max_moves: int = 10           # 変化図は 10 手まで（FR-08）
 
     # -------- 復習（FR-10）
-    review_intervals: tuple[int, ...] = (1, 3, 7, 14)
-    graduate_streak: int = 5
+    review_intervals: tuple[int, ...] = (4, 10)   # 正解 1 回目・2 回目のあとの間隔（日）
+    graduate_streak: int = 3
     daily_review_limit: int = 10
+    daily_new_limit: int = 4         # 今日の分に入れる未出題の問題の上限
+    daily_extra_limit: int = 10      # 「続けて練習する」で出す追加分の上限
     tsumego_graduate_streak: int = 3
 
     # -------- Claude API

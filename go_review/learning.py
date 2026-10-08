@@ -116,7 +116,7 @@ def record_tsumego_answer(
 
     streak = (row["streak"] or 0) + 1 if (is_correct and not hint_used) else 0
     graduated = 1 if streak >= settings.tsumego_graduate_streak else 0
-    due = None if graduated else next_due(max(streak, 1), settings)
+    due = None if graduated else next_due(streak, settings)
     solved_at = solved_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     db.execute(

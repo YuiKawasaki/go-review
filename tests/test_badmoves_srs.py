@@ -84,14 +84,15 @@ class TestSchedule(unittest.TestCase):
         self.s = Settings()
         self.today = date(2026, 8, 18)
 
-    def test_interval_progression(self):
-        self.assertEqual(next_due(1, self.s, self.today), "2026-08-19")   # 翌日
-        self.assertEqual(next_due(2, self.s, self.today), "2026-08-21")   # 3日後
-        self.assertEqual(next_due(3, self.s, self.today), "2026-08-25")   # 7日後
-        self.assertEqual(next_due(4, self.s, self.today), "2026-09-01")   # 14日後
+    def test_wrong_answer_comes_back_tomorrow(self):
+        self.assertEqual(next_due(0, self.s, self.today), "2026-08-19")
+
+    def test_interval_widens_after_each_correct(self):
+        self.assertEqual(next_due(1, self.s, self.today), "2026-08-22")   # 4日後
+        self.assertEqual(next_due(2, self.s, self.today), "2026-08-28")   # 10日後
 
     def test_graduation(self):
-        self.assertIsNone(next_due(5, self.s, self.today))
+        self.assertIsNone(next_due(3, self.s, self.today))
 
 
 class TestReviewFlow(unittest.TestCase):
@@ -129,8 +130,8 @@ class TestReviewFlow(unittest.TestCase):
         self.assertFalse(result["is_correct"])
         self.assertEqual(result["streak"], 0)
 
-    def test_graduates_after_five(self):
-        for _ in range(5):
+    def test_graduates_after_three(self):
+        for _ in range(3):
             result = record_answer(self.db, "P-0001", "D4", 3.0, self.settings)
         self.assertTrue(result["graduated"])
         self.assertIsNone(result["next_due_at"])
@@ -170,18 +171,18 @@ class TestReviewFlow(unittest.TestCase):
 
 
 class TestDueProblemsExtra(unittest.TestCase):
-    """今日の優先分を終えても学習をやめさせない、という仕様の確認。
+    """今日の分と追加練習の分の選び方。
 
-    due_problems は「優先順の先頭 limit 件」＋「卒業していない残り全部
-    （間違えたもの中心にランダム順）」を返す。severity_rank / 期日 /
-    難易度だけで切ると、期日超過が上限を超える日が続くかぎり毎日同じ
-    上位 N 問しか出せない（すべて答えるまで変化しない静的な値なので）。
+    今日の分は「期日が来た復習」を優先し、空きを未出題で埋める（未出題は
+    上限あり）。追加練習の分は卒業していない残りから上限まで。
     """
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.settings = make_settings(Path(self.tmp.name))
         self.settings.daily_review_limit = 2
+        self.settings.daily_new_limit = 2
+        self.settings.daily_extra_limit = 100
         self.db = Database(self.settings.db_path)
 
     def tearDown(self):
@@ -201,11 +202,45 @@ class TestDueProblemsExtra(unittest.TestCase):
         )
         self.db.commit()
 
-    def test_all_non_graduated_are_returned_beyond_limit(self):
+    def test_today_is_capped_and_rest_is_extra(self):
         for i in range(5):
             self._add(f"P-{i}")
         out = due_problems(self.db, self.settings, today=date(2026, 1, 1))
-        self.assertEqual(len(out), 5, "上限を超えても、卒業していない分は全部返る")
+        self.assertEqual(sum(1 for r in out if not r["extra"]), 2)
+        self.assertEqual(len(out), 5)
+
+    def test_extra_is_capped(self):
+        self.settings.daily_extra_limit = 1
+        for i in range(5):
+            self._add(f"P-{i}")
+        out = due_problems(self.db, self.settings, today=date(2026, 1, 1))
+        self.assertEqual(sum(1 for r in out if r["extra"]), 1)
+
+    def test_due_reviews_come_before_new_ones(self):
+        self.settings.daily_review_limit = 3
+        self._add("P-new1")
+        self._add("P-new2")
+        self._add("P-rev1", last_result=VERDICT_WRONG, next_due_at="2025-12-30")
+        self._add("P-rev2", last_result=VERDICT_CORRECT, next_due_at="2025-12-31")
+        out = due_problems(self.db, self.settings, today=date(2026, 1, 1))
+        today_ids = {r["problem_id"] for r in out if not r["extra"]}
+        self.assertTrue({"P-rev1", "P-rev2"} <= today_ids)
+        self.assertEqual(len(today_ids), 3)
+
+    def test_new_ones_are_limited_per_day(self):
+        self.settings.daily_review_limit = 10
+        self.settings.daily_new_limit = 2
+        for i in range(6):
+            self._add(f"P-new{i}")
+        out = due_problems(self.db, self.settings, today=date(2026, 1, 1))
+        self.assertEqual(sum(1 for r in out if not r["extra"]), 2)
+
+    def test_same_day_gives_same_selection(self):
+        for i in range(8):
+            self._add(f"P-{i}")
+        a = due_problems(self.db, self.settings, today=date(2026, 1, 1))
+        b = due_problems(self.db, self.settings, today=date(2026, 1, 1))
+        self.assertEqual([r["problem_id"] for r in a], [r["problem_id"] for r in b])
 
     def test_graduated_excluded_even_from_extra(self):
         self._add("P-a")
@@ -226,7 +261,7 @@ class TestDueProblemsExtra(unittest.TestCase):
                       next_due_at="2099-01-01")
         out = due_problems(self.db, self.settings, today=date(2026, 1, 1))
         self.assertEqual(len(out), 12)
-        extra_ids = [r["problem_id"] for r in out[2:]]
+        extra_ids = [r["problem_id"] for r in out if r["extra"]]
         wrong_positions = [i for i, pid in enumerate(extra_ids) if pid.startswith("P-wrong")]
         ok_positions = [i for i, pid in enumerate(extra_ids) if pid.startswith("P-ok")]
         self.assertLess(max(wrong_positions), min(ok_positions),

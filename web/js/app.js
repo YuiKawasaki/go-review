@@ -66,6 +66,7 @@ async function viewHome() {
 
   const due = await store.loadDue().catch(() => ({ problems: [], tsumego: [] }));
   const dueTsumego = (due.tsumego || []).filter((t) => t.interactive);
+  const todayProblems = (due.problems || []).filter((p) => !p.extra).length;
   const pending = index.unanalyzed || 0;
   const queued = await store.queueSize();
 
@@ -73,7 +74,7 @@ async function viewHome() {
     el('div', { class: 'card' }, [
       el('div', { class: 'row-between' }, [
         el('h2', {}, '今日の復習'),
-        el('span', { class: 'badge' }, `${(due.problems || []).length} 問`),
+        el('span', { class: 'badge' }, `${todayProblems} 問`),
       ]),
       el('p', { class: 'muted' }, '過去の自分の悪手局面から出題します。'),
       el('button', {
@@ -543,6 +544,16 @@ function buildSequences(problem, playedGtp) {
         : `この手順なら、あなたの勝ちやすさは ${Math.round(best.winrate)}% を保てます。`,
     });
   }
+  if ((problem.actual_sequence || []).length) {
+    out.push({
+      key: 'actual',
+      label: '実戦の進行',
+      pv: problem.actual_sequence,
+      comments: problem.actual_comments || [],
+      note: '',
+      caveat: '実際の対局でこう進みました（AI の読みではありません）。',
+    });
+  }
   return { sequences: out, played, best };
 }
 
@@ -590,12 +601,10 @@ async function viewQuiz() {
     return;
   }
 
-  // due.problems は「今日の優先順ぶん（先頭）＋ 卒業していない問題の
-  // 残り全部（間違えたもの中心にランダム）」の並び。詰碁画面と同じく、
-  // 前半を終えたところで一度だけ案内を挟む。
+  // due.problems は「今日の分（先頭）＋ 追加練習の分（extra）」の並び。
+  // 詰碁画面と同じく、今日の分を終えたところで一度だけ案内を挟む。
   const primaryCount = (due.problems || [])
-    .slice(0, due.limit || 0)
-    .filter((d) => byId.has(d.problem_id)).length;
+    .filter((d) => !d.extra && byId.has(d.problem_id)).length;
   let position = 0;
   let extraAnnounced = false;
   renderProblem();
@@ -606,7 +615,7 @@ async function viewQuiz() {
       app.replaceChildren(el('div', { class: 'card' }, [
         el('h2', {}, '今日の分は終わりました'),
         el('p', { class: 'muted' },
-          'ここからは、まだ卒業していない問題を続けて練習できます（間違えた問題を中心に、ランダムな順で出します）。'),
+          `続けるなら、追加で最大 ${queue.length - primaryCount} 問練習できます（間違えた問題を中心に、ランダムな順で出します）。`),
         el('button', { class: 'primary', onclick: () => renderProblem() }, '続けて練習する'),
         el('button', { onclick: () => nav('#/home') }, 'ここでやめる'),
       ]));
@@ -668,12 +677,19 @@ async function viewQuiz() {
     }
 
     function showResult(coord, verdict, gtp) {
-      const isActual = (problem.actual_move || '').toUpperCase() === gtp.toUpperCase();
+      const actualGtp = (problem.actual_move || '').toUpperCase();
+      const isActual = actualGtp === gtp.toUpperCase();
       const ghosts = (problem.correct_moves || []).map((m, i) => ({
         coord: gtpToCoord(m.coord, size),
         color: problem.player_to_move,
         label: m.label === '最善' ? '正' : String(i + 1),
       }));
+      // 実戦で打った手を盤に出す（押した手と同じなら、その手の印で足りる）
+      const isCorrectSpot = (problem.correct_moves || [])
+        .some((m) => (m.coord || '').toUpperCase() === actualGtp);
+      if (actualGtp && !isActual && !isCorrectSpot) {
+        ghosts.push({ coord: gtpToCoord(actualGtp, size), color: problem.player_to_move, label: '実' });
+      }
       view.interactive = false;
       view.setState(state, {
         lastMove: coord,
@@ -691,13 +707,16 @@ async function viewQuiz() {
       fill(
         seqTop,
         el('div', { class: `verdict verdict-${verdict === '不正解' ? 'wrong' : 'ok'}` }, verdict),
-        isActual ? el('p', { class: 'muted' }, 'これが実戦で打った手です。') : null,
+        isActual
+          ? el('p', { class: 'muted' }, 'これが実戦で打った手です。')
+          : (actualGtp && !isCorrectSpot
+            ? el('p', { class: 'muted small' }, `盤上の「実」が実戦で打った手（${actualGtp}）です。`)
+            : null),
         ...sequenceSection(problem, gtp, view, size, state),
       );
+      // 解説文はいったん出さない。盤上の手と手順で確認する方針。
       fill(
         resultBox,
-        el('h3', { class: 'seq-title' }, '解説'),
-        renderExplanation(problem.explanation || ''),
         el('div', { class: 'row' }, (problem.tags || []).map((t) => el('span', { class: 'tag' }, t))),
         el('div', { class: 'row' }, [
           el('button', {
@@ -724,7 +743,9 @@ async function viewQuiz() {
 
     app.replaceChildren(
       el('div', { class: 'quiz-header' }, [
-        el('span', {}, `${position + 1} / ${queue.length}`),
+        el('span', {}, position < primaryCount
+          ? `今日 ${position + 1} / ${primaryCount}`
+          : `追加 ${position - primaryCount + 1} / ${queue.length - primaryCount}`),
         el('span', { class: 'muted' }, ` 難易度 ${problem.difficulty || '-'}`),
         el('span', { class: 'muted' }, ` ${problem.player_to_move === 'B' ? '黒番' : '白番'}`),
       ]),

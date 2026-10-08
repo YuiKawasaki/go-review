@@ -382,4 +382,21 @@ def problem_payload(db: Database, problem_id: str) -> Optional[dict]:
         "graduated": bool(state["graduated"]) if state else False,
         # 学習者が押した手ごとの進行。押された手が無いときは空でよい。
         "refutations": load_refutations(db, problem_id),
+        **_actual_sequence(db, row),
     }
+
+
+ACTUAL_SEQUENCE_MOVES = 10
+
+
+def _actual_sequence(db: Database, row) -> dict:
+    """実戦で打った手から始まる、実際の対局の進行（AI の読みではない）。"""
+    game_row = db.query_one("SELECT sgf, my_color FROM games WHERE id = ?", (row["game_id"],))
+    if not game_row:
+        return {"actual_sequence": [], "actual_comments": []}
+    game = parse_game(game_row["sgf"])
+    start = row["move_no"] - 1
+    moves = game.moves[start:start + ACTUAL_SEQUENCE_MOVES]
+    seq = [coord_to_gtp(m.coord, game.size) if m.coord else "pass" for m in moves]
+    comments = pv_comments(game, start, seq, game_row["my_color"], BRANCH_PUNISH) if seq else []
+    return {"actual_sequence": seq, "actual_comments": comments}
